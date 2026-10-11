@@ -538,13 +538,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
           mainAxisAlignment:
               MainAxisAlignment.spaceBetween,
           children: [
-            IconButton(
-              onPressed: goToMainMenu,
-              icon: const Icon(
-                Icons.arrow_back_ios_new,
-                color: Colors.white,
-              ),
-            ),
+            const SizedBox(width: 48),
 
             Container(
               padding:

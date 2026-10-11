@@ -687,15 +687,7 @@ class _MathGameState extends State<MathGame> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // BACK BUTTON
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: Colors.white,
-              size: 26,
-            ),
-          ),
+          const SizedBox(width: 48),
 
           // TITLE BADGE
           Container(

@@ -6,6 +6,8 @@ import '../game/memory_match.dart';
 import '../game/pattern_logic.dart';
 import '../game/sequence.dart';
 import '../game/memory_matrix.dart';
+import '../game/logic_detective.dart';
+import '../widgets/game_loading_screen.dart';
 
 class LevelSelectScreen extends StatelessWidget {
   const LevelSelectScreen({super.key});
@@ -17,9 +19,9 @@ class LevelSelectScreen extends StatelessWidget {
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF4A0E4E), // Rich Violet
-              Color(0xFF811252), // Deep Magenta
-              Color(0xFF2E0854), // Dark Cosmic Purple
+              Color(0xFF4A0E4E),
+              Color(0xFF811252),
+              Color(0xFF2E0854),
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -28,13 +30,14 @@ class LevelSelectScreen extends StatelessWidget {
         child: SafeArea(
           child: Column(
             children: [
-              // TOP BAR
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // BACK BUTTON
                     _build3DButton(
                       onTap: () => Navigator.pop(context),
                       child: const Icon(
@@ -43,10 +46,11 @@ class LevelSelectScreen extends StatelessWidget {
                         size: 28,
                       ),
                     ),
-
-                    // HEADER TITLE BADGE
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.3),
                         borderRadius: BorderRadius.circular(30),
@@ -65,10 +69,11 @@ class LevelSelectScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-
-                    // COIN / STAR COUNTER BADGE
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.amber.shade700,
                         borderRadius: BorderRadius.circular(20),
@@ -82,7 +87,11 @@ class LevelSelectScreen extends StatelessWidget {
                       ),
                       child: const Row(
                         children: [
-                          Icon(Icons.star_rounded, color: Colors.white, size: 20),
+                          Icon(
+                            Icons.star_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                           SizedBox(width: 4),
                           Text(
                             "18/18",
@@ -99,11 +108,14 @@ class LevelSelectScreen extends StatelessWidget {
                 ),
               ),
 
-              // LOGO HEADER
               const SizedBox(height: 5),
+
               ShaderMask(
                 shaderCallback: (bounds) => const LinearGradient(
-                  colors: [Color(0xFFFFF176), Color(0xFFFF8A65)],
+                  colors: [
+                    Color(0xFFFFF176),
+                    Color(0xFFFF8A65),
+                  ],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                 ).createShader(bounds),
@@ -136,7 +148,6 @@ class LevelSelectScreen extends StatelessWidget {
 
               const SizedBox(height: 15),
 
-              // GAME GRID LIST
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 25),
@@ -147,7 +158,10 @@ class LevelSelectScreen extends StatelessWidget {
                       title: "Math Challenge",
                       subtitle: "Speed & Accuracy",
                       icon: "🔢",
-                      gradientColors: const [Color(0xFF00C6FF), Color(0xFF0072FF)],
+                      gradientColors: const [
+                        Color(0xFF00C6FF),
+                        Color(0xFF0072FF),
+                      ],
                       borderColor: const Color(0xFF0052B4),
                       starsEarned: 3,
                       unlocked: true,
@@ -158,7 +172,10 @@ class LevelSelectScreen extends StatelessWidget {
                       title: "Science Puzzle",
                       subtitle: "Memory & Observation",
                       icon: "🔬",
-                      gradientColors: const [Color(0xFF11998E), Color(0xFF38EF7D)],
+                      gradientColors: const [
+                        Color(0xFF11998E),
+                        Color(0xFF38EF7D),
+                      ],
                       borderColor: const Color(0xFF0C6B63),
                       starsEarned: 3,
                       unlocked: true,
@@ -169,7 +186,10 @@ class LevelSelectScreen extends StatelessWidget {
                       title: "Memory Match",
                       subtitle: "Focus & Attention",
                       icon: "🧩",
-                      gradientColors: const [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
+                      gradientColors: const [
+                        Color(0xFF8E2DE2),
+                        Color(0xFF4A00E0),
+                      ],
                       borderColor: const Color(0xFF330099),
                       starsEarned: 3,
                       unlocked: true,
@@ -180,7 +200,10 @@ class LevelSelectScreen extends StatelessWidget {
                       title: "Pattern Logic",
                       subtitle: "Logical Reasoning",
                       icon: "🧠",
-                      gradientColors: const [Color(0xFFFF8008), Color(0xFFFFC837)],
+                      gradientColors: const [
+                        Color(0xFFFF8008),
+                        Color(0xFFFFC837),
+                      ],
                       borderColor: const Color(0xFFC76000),
                       starsEarned: 2,
                       unlocked: true,
@@ -191,7 +214,10 @@ class LevelSelectScreen extends StatelessWidget {
                       title: "Sequence Recall",
                       subtitle: "Repeat the Order",
                       icon: "🔄",
-                      gradientColors: const [Color(0xFFFF416C), Color(0xFFFF4B2B)],
+                      gradientColors: const [
+                        Color(0xFFFF416C),
+                        Color(0xFFFF4B2B),
+                      ],
                       borderColor: const Color(0xFFB31217),
                       starsEarned: 1,
                       unlocked: true,
@@ -202,16 +228,47 @@ class LevelSelectScreen extends StatelessWidget {
                       title: "Memory Matrix",
                       subtitle: "Find the Mismatch",
                       icon: "🎯",
-                      gradientColors: const [Color(0xFFF7971E), Color(0xFFFFD200)],
+                      gradientColors: const [
+                        Color(0xFFF7971E),
+                        Color(0xFFFFD200),
+                      ],
                       borderColor: const Color(0xFFB86B00),
                       starsEarned: 0,
                       unlocked: true,
                       page: const MemoryMatrix(),
                     ),
-                    const LockedLevelCard(
+
+                    // LEVEL 7: LOGIC DETECTIVE
+                    GameLevelCard(
                       levelNum: "7",
+                      title: "Logic Detective",
+                      subtitle: "Solve the Mystery",
+                      icon: "🔎",
+                      gradientColors: const [
+                        Color(0xFF654EA3),
+                        Color(0xFFEAAFC8),
+                      ],
+                      borderColor: const Color(0xFF493078),
+                      starsEarned: 0,
+                      unlocked: true,
+                      page: const LogicDetective(),
+                    ),
+
+                    // Levels 8–10 remain locked for now.
+                    const LockedLevelCard(
+                      levelNum: "8",
                       title: "Coming Soon",
-                      subtitle: "Unlock Level 6 first!",
+                      subtitle: "More brain challenges ahead!",
+                    ),
+                    const LockedLevelCard(
+                      levelNum: "9",
+                      title: "Coming Soon",
+                      subtitle: "More brain challenges ahead!",
+                    ),
+                    const LockedLevelCard(
+                      levelNum: "10",
+                      title: "Coming Soon",
+                      subtitle: "Final brain challenge!",
                     ),
                   ],
                 ),
@@ -290,16 +347,28 @@ class _GameLevelCardState extends State<GameLevelCard> {
       onTapDown: (_) => setState(() => _isPressed = true),
       onTapUp: (_) {
         setState(() => _isPressed = false);
+
+        if (!widget.unlocked) return;
+
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => widget.page),
+          MaterialPageRoute(
+            builder: (context) => GameLoadingScreen(
+              levelTitle: widget.title,
+              nextScreen: widget.page,
+            ),
+          ),
         );
       },
       onTapCancel: () => setState(() => _isPressed = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         margin: const EdgeInsets.only(bottom: 18),
-        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
+        transform: Matrix4.translationValues(
+          0,
+          _isPressed ? 4 : 0,
+          0,
+        ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: widget.gradientColors,
@@ -307,7 +376,10 @@ class _GameLevelCardState extends State<GameLevelCard> {
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.white.withOpacity(0.6), width: 2.5),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.6),
+            width: 2.5,
+          ),
           boxShadow: [
             BoxShadow(
               color: widget.borderColor,
@@ -322,10 +394,12 @@ class _GameLevelCardState extends State<GameLevelCard> {
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
           child: Row(
             children: [
-              // LEVEL BADGE + EMOJI AVATAR
               Container(
                 width: 65,
                 height: 65,
@@ -347,17 +421,16 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ),
                 ),
               ),
-
               const SizedBox(width: 14),
-
-              // CARD DETAILS
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // LEVEL NUMBER TAG
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.25),
                         borderRadius: BorderRadius.circular(10),
@@ -372,9 +445,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 3),
-
                     Text(
                       widget.title,
                       style: const TextStyle(
@@ -390,7 +461,6 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         ],
                       ),
                     ),
-
                     Text(
                       widget.subtitle,
                       style: TextStyle(
@@ -399,10 +469,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-
                     const SizedBox(height: 6),
-
-                    // STAR RATING DISPLAY
                     Row(
                       children: List.generate(3, (index) {
                         return Icon(
@@ -419,8 +486,6 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ],
                 ),
               ),
-
-              // PLAY BUTTON ICON
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -434,7 +499,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ],
                 ),
                 child: Icon(
-                  Icons.play_arrow_rounded,
+                  widget.unlocked
+                      ? Icons.play_arrow_rounded
+                      : Icons.lock_rounded,
                   color: widget.borderColor,
                   size: 28,
                 ),
@@ -463,11 +530,17 @@ class LockedLevelCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 18),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 14,
+      ),
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.25),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white24, width: 2),
+        border: Border.all(
+          color: Colors.white24,
+          width: 2,
+        ),
       ),
       child: Row(
         children: [

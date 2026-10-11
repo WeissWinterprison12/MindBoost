@@ -63,6 +63,11 @@ flutter:
   assets:
     - assets/sounds/
     - assets/images/science/
+    - assets/images/mindboost_logo.png
+    - assets/images/level7/garden_mystery.png
+    - assets/images/level7/library_book.png
+    - assets/images/level7/missing_pencil.png
+    - assets/images/level7/science_fair.png
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
