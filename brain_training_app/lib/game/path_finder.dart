@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:math';
 
@@ -16,50 +17,410 @@ class PathFinder extends StatefulWidget {
 }
 
 class _PathFinderState extends State<PathFinder> {
-  static const int maxRounds = 10;
+  static const int maxRounds = 5;
   static const int startingLives = 3;
 
-  final Random _random = Random();
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  static const Color backgroundColor = Color(0xFF10091F);
+  static const Color panelColor = Color(0xFF21143A);
+  static const Color cyanColor = Color(0xFF64E7FF);
+  static const Color greenColor = Color(0xFF55E6A5);
+  static const Color goldColor = Color(0xFFFFD166);
+  static const Color redColor = Color(0xFFFF6B81);
 
-  late ConfettiController confettiController;
-  late List<List<bool>> maze;
+  final Random random = Random();
+  final AudioPlayer audioPlayer = AudioPlayer();
+  final ConfettiController confettiController =
+      ConfettiController(duration: const Duration(seconds: 3));
 
-  Timer? roundTimer;
+  Timer? gameTimer;
 
-  // The player's position uses x = column and y = row.
-  Point<int> player = const Point<int>(1, 1);
+  int currentRound = 1;
+  int lives = startingLives;
+  int secondsRemaining = 8;
+  int roundsCompleted = 0;
+  int totalMoves = 0;
+  int mistakes = 0;
+  int xp = 0;
+
+  int mazeSize = 7;
+  int solveTimeLimit = 45;
+  int previewTimeLimit = 8;
+
+  List<List<bool>> maze = [];
+  List<Point<int>> tracedPath = [];
+
+  final Point<int> start = const Point<int>(1, 1);
   Point<int> goal = const Point<int>(5, 5);
 
-  int roundsCompleted = 0;
-  int secondsRemaining = 38;
-  int lives = startingLives;
-  int moves = 0;
-  int wallBumps = 0;
-  int xp = 0;
-  int bestRoundTime = 0;
-
+  bool isPreview = true;
+  bool isMistakeReveal = false;
+  bool showTryAgain = false;
   bool isPaused = false;
-  bool gameOver = false;
-  bool _scoreSaved = false;
+  bool isGameOver = false;
+  bool isSaving = false;
+  bool isDragging = false;
+  bool hasStarted = false;
 
-  String feedbackText = 'Swipe to find the exit!';
-  Color feedbackColor = Colors.white;
-
-  int get currentRound => roundsCompleted + 1;
-
-  // Rounds 1-2: 7x7, 3-4: 9x9, through 15x15.
-  int get mazeSize =>
-      min(15, 7 + (roundsCompleted ~/ 2) * 2);
-
-  int get roundTimeLimit =>
-      max(20, 38 - (roundsCompleted * 2));
-
-  double get accuracy {
-    return (roundsCompleted / maxRounds) * 100;
+  @override
+  void initState() {
+    super.initState();
+    _prepareRound();
   }
 
-  String getGrade() {
+  @override
+  void dispose() {
+    gameTimer?.cancel();
+    audioPlayer.dispose();
+    confettiController.dispose();
+    super.dispose();
+  }
+
+  int _sizeForRound(int round) {
+    switch (round) {
+      case 1:
+        return 7;
+      case 2:
+        return 9;
+      case 3:
+        return 11;
+      case 4:
+        return 13;
+      default:
+        return 15;
+    }
+  }
+
+  int _previewSecondsForRound(int round) {
+    return max(4, 9 - round);
+  }
+
+  int _solveSecondsForRound(int round) {
+    return 50 - (round * 5);
+  }
+
+  void _prepareRound() {
+    gameTimer?.cancel();
+
+    mazeSize = _sizeForRound(currentRound);
+    goal = Point<int>(mazeSize - 2, mazeSize - 2);
+    previewTimeLimit = _previewSecondsForRound(currentRound);
+    solveTimeLimit = _solveSecondsForRound(currentRound);
+
+    maze = _generateMaze(mazeSize);
+    tracedPath = [start];
+
+    isPreview = true;
+    isMistakeReveal = false;
+    showTryAgain = false;
+    isDragging = false;
+    secondsRemaining = previewTimeLimit;
+    hasStarted = true;
+
+    _startTimer();
+
+    if (mounted) setState(() {});
+  }
+
+  List<List<bool>> _generateMaze(int size) {
+    // true = walkable corridor; false = wall.
+    final grid = List.generate(
+      size,
+      (_) => List<bool>.filled(size, false),
+    );
+
+    final visited = <Point<int>>{};
+    final stack = <Point<int>>[start];
+
+    grid[start.y][start.x] = true;
+    visited.add(start);
+
+    const directions = <Point<int>>[
+      Point<int>(0, -2),
+      Point<int>(0, 2),
+      Point<int>(-2, 0),
+      Point<int>(2, 0),
+    ];
+
+    while (stack.isNotEmpty) {
+      final current = stack.last;
+      final neighbors = <Point<int>>[];
+
+      for (final direction in directions) {
+        final next = Point<int>(
+          current.x + direction.x,
+          current.y + direction.y,
+        );
+
+        if (next.x > 0 &&
+            next.y > 0 &&
+            next.x < size - 1 &&
+            next.y < size - 1 &&
+            !visited.contains(next)) {
+          neighbors.add(next);
+        }
+      }
+
+      if (neighbors.isEmpty) {
+        stack.removeLast();
+        continue;
+      }
+
+      final next = neighbors[random.nextInt(neighbors.length)];
+      final middle = Point<int>(
+        (current.x + next.x) ~/ 2,
+        (current.y + next.y) ~/ 2,
+      );
+
+      grid[middle.y][middle.x] = true;
+      grid[next.y][next.x] = true;
+
+      visited.add(next);
+      stack.add(next);
+    }
+
+    grid[start.y][start.x] = true;
+    grid[goal.y][goal.x] = true;
+
+    return grid;
+  }
+
+  void _startTimer() {
+    gameTimer?.cancel();
+
+    gameTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || isPaused || isGameOver) return;
+
+      if (secondsRemaining > 1) {
+        setState(() => secondsRemaining--);
+        return;
+      }
+
+      if (isMistakeReveal) {
+        // Show the mistake briefly, then give the player another preview.
+        setState(() {
+          isMistakeReveal = false;
+          showTryAgain = false;
+          isPreview = true;
+          tracedPath = [start];
+          isDragging = false;
+          secondsRemaining = previewTimeLimit;
+        });
+        return;
+      }
+
+      if (isPreview) {
+        // Preview is over. Hide the maze and begin the tracing timer.
+        setState(() {
+          isPreview = false;
+          secondsRemaining = solveTimeLimit;
+        });
+        return;
+      }
+
+      // The player ran out of time.
+      _loseLifeForTimeout();
+    });
+  }
+
+  Future<void> _playSound(String filename) async {
+    try {
+      await audioPlayer.stop();
+      await audioPlayer.play(AssetSource('sounds/$filename'));
+    } catch (_) {
+      // A missing sound should not prevent the game from working.
+    }
+  }
+
+  void _handlePanStart(DragStartDetails details, double boardSize) {
+    if (isPaused ||
+        isGameOver ||
+        isPreview ||
+        isMistakeReveal ||
+        !hasStarted) {
+      return;
+    }
+
+    final cell = _positionToCell(details.localPosition, boardSize);
+    if (cell == null) return;
+
+    // Start a drag from the beginning or from the current trace endpoint.
+    if (cell == tracedPath.last) {
+      setState(() => isDragging = true);
+    }
+  }
+
+  void _handlePanUpdate(DragUpdateDetails details, double boardSize) {
+    if (!isDragging ||
+        isPaused ||
+        isGameOver ||
+        isPreview ||
+        isMistakeReveal) {
+      return;
+    }
+
+    final cell = _positionToCell(details.localPosition, boardSize);
+    if (cell == null || cell == tracedPath.last) return;
+
+    final last = tracedPath.last;
+
+    // Allow the player to backtrack along their existing route.
+    if (tracedPath.length >= 2 && cell == tracedPath[tracedPath.length - 2]) {
+      setState(() {
+        tracedPath.removeLast();
+        totalMoves++;
+      });
+      return;
+    }
+
+    // Cells must be connected orthogonally. Skipping across cells is not
+    // allowed, because the route needs to follow the maze corridors.
+    final distance = (cell.x - last.x).abs() + (cell.y - last.y).abs();
+    if (distance != 1) return;
+
+    // Touching a wall reveals the complete maze and lets the player retry.
+    if (!_isWalkable(cell)) {
+      _triggerMistake();
+      return;
+    }
+
+    setState(() {
+      tracedPath.add(cell);
+      totalMoves++;
+    });
+
+    if (cell == goal) {
+      _completeRound();
+    }
+  }
+
+  void _handlePanEnd(DragEndDetails details) {
+    if (mounted) setState(() => isDragging = false);
+  }
+
+  Point<int>? _positionToCell(Offset position, double boardSize) {
+    if (position.dx < 0 ||
+        position.dy < 0 ||
+        position.dx >= boardSize ||
+        position.dy >= boardSize) {
+      return null;
+    }
+
+    final cellSize = boardSize / mazeSize;
+    final x = (position.dx / cellSize).floor();
+    final y = (position.dy / cellSize).floor();
+
+    if (x < 0 || y < 0 || x >= mazeSize || y >= mazeSize) {
+      return null;
+    }
+
+    return Point<int>(x, y);
+  }
+
+  bool _isWalkable(Point<int> point) {
+    if (point.x < 0 ||
+        point.y < 0 ||
+        point.x >= mazeSize ||
+        point.y >= mazeSize) {
+      return false;
+    }
+
+    return maze[point.y][point.x];
+  }
+
+  void _triggerMistake() {
+    if (isMistakeReveal || isPreview || isGameOver) return;
+
+    mistakes++;
+    _playSound('wrong.mp3');
+
+    setState(() {
+      isDragging = false;
+      isPreview = true;
+      isMistakeReveal = true;
+      showTryAgain = true;
+      secondsRemaining = 2;
+    });
+  }
+
+  void _loseLifeForTimeout() {
+    gameTimer?.cancel();
+    _playSound('timeout.mp3');
+
+    lives--;
+
+    if (lives <= 0) {
+      _finishGame();
+      return;
+    }
+
+    setState(() {
+      isPreview = true;
+      isMistakeReveal = false;
+      showTryAgain = false;
+      isDragging = false;
+      tracedPath = [start];
+      secondsRemaining = previewTimeLimit;
+    });
+
+    _startTimer();
+  }
+
+  void _completeRound() {
+    gameTimer?.cancel();
+    _playSound('correct.mp3');
+
+    roundsCompleted++;
+    final timeBonus = secondsRemaining >= (solveTimeLimit ~/ 2) ? 10 : 0;
+    xp += 20 + timeBonus;
+
+    if (roundsCompleted >= maxRounds) {
+      _playSound('level_complete.mp3');
+      confettiController.play();
+      _finishGame();
+      return;
+    }
+
+    setState(() {
+      currentRound++;
+    });
+
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (!mounted || isGameOver) return;
+      _prepareRound();
+    });
+  }
+
+  void pauseGame() {
+    if (isGameOver || isPaused) return;
+    gameTimer?.cancel();
+    setState(() => isPaused = true);
+  }
+
+  void resumeGame() {
+    if (isGameOver || !isPaused) return;
+    setState(() => isPaused = false);
+    _startTimer();
+  }
+
+  void restartGame() {
+    gameTimer?.cancel();
+
+    setState(() {
+      currentRound = 1;
+      lives = startingLives;
+      roundsCompleted = 0;
+      totalMoves = 0;
+      mistakes = 0;
+      xp = 0;
+      isPaused = false;
+      isGameOver = false;
+      isSaving = false;
+    });
+
+    _prepareRound();
+  }
+
+  String _gradeForAccuracy(double accuracy) {
     if (accuracy >= 90) return 'S';
     if (accuracy >= 80) return 'A';
     if (accuracy >= 70) return 'B';
@@ -67,986 +428,655 @@ class _PathFinderState extends State<PathFinder> {
     return 'D';
   }
 
-  @override
-  void initState() {
-    super.initState();
+  double get accuracy => (roundsCompleted / maxRounds) * 100;
 
-    confettiController = ConfettiController(
-      duration: const Duration(seconds: 3),
-    );
+  Future<void> _finishGame() async {
+    if (isGameOver) return;
 
-    _generateMaze();
-    secondsRemaining = roundTimeLimit;
-    _startRoundTimer(resetTime: false);
-  }
-
-  // ------------------------------------------------------------
-  // MAZE GENERATION
-  // ------------------------------------------------------------
-
-  void _generateMaze() {
-    final size = mazeSize;
-
-    // true = wall, false = walkable path.
-    maze = List.generate(
-      size,
-      (_) => List<bool>.filled(size, true),
-    );
-
-    player = const Point<int>(1, 1);
-    goal = Point<int>(size - 2, size - 2);
-
-    final List<Point<int>> stack = [player];
-    maze[player.y][player.x] = false;
-
-    // Randomized depth-first search creates a connected maze.
-    while (stack.isNotEmpty) {
-      final current = stack.last;
-
-      final directions = <Point<int>>[
-        const Point<int>(0, -1),
-        const Point<int>(0, 1),
-        const Point<int>(-1, 0),
-        const Point<int>(1, 0),
-      ]..shuffle(_random);
-
-      Point<int>? next;
-      Point<int>? direction;
-
-      for (final dir in directions) {
-        final nx = current.x + dir.x * 2;
-        final ny = current.y + dir.y * 2;
-
-        if (nx < 1 ||
-            ny < 1 ||
-            nx >= size - 1 ||
-            ny >= size - 1) {
-          continue;
-        }
-
-        if (maze[ny][nx]) {
-          next = Point<int>(nx, ny);
-          direction = dir;
-          break;
-        }
-      }
-
-      if (next == null || direction == null) {
-        stack.removeLast();
-        continue;
-      }
-
-      // Open the wall between the current cell and next cell.
-      final wallX = current.x + direction.x;
-      final wallY = current.y + direction.y;
-
-      maze[wallY][wallX] = false;
-      maze[next.y][next.x] = false;
-
-      stack.add(next);
-    }
-
-    // The algorithm guarantees a path between start and finish.
-  }
-
-  // ------------------------------------------------------------
-  // SOUND
-  // ------------------------------------------------------------
-
-  Future<void> _playSound(String fileName) async {
-    try {
-      await _audioPlayer.stop();
-      await _audioPlayer.play(
-        AssetSource('sounds/$fileName'),
-      );
-    } catch (e) {
-      debugPrint('Could not play $fileName: $e');
-    }
-  }
-
-  // ------------------------------------------------------------
-  // TIMER
-  // ------------------------------------------------------------
-
-  void _startRoundTimer({bool resetTime = true}) {
-    roundTimer?.cancel();
-
-    if (gameOver || isPaused) return;
-
-    if (resetTime) {
-      secondsRemaining = roundTimeLimit;
-    }
-
-    roundTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (timer) {
-        if (!mounted || gameOver || isPaused) {
-          timer.cancel();
-          return;
-        }
-
-        if (secondsRemaining <= 1) {
-          timer.cancel();
-
-          setState(() {
-            secondsRemaining = 0;
-          });
-
-          _handleTimeout();
-        } else {
-          setState(() {
-            secondsRemaining--;
-          });
-        }
-      },
-    );
-  }
-
-  void _handleTimeout() {
-    if (gameOver || isPaused) return;
-
-    _playSound('timeout.mp3');
-
-    final bool noLivesLeft = lives <= 1;
+    gameTimer?.cancel();
 
     setState(() {
-      lives--;
-
-      feedbackText = noLivesLeft
-          ? 'Out of time and out of lives!'
-          : 'Time is up! Try this maze again.';
-
-      feedbackColor = Colors.redAccent;
-
-      if (!noLivesLeft) {
-        _generateMaze();
-        secondsRemaining = roundTimeLimit;
-      }
-    });
-
-    if (noLivesLeft) {
-      _finishGame(completedAll: false);
-    } else {
-      _startRoundTimer(resetTime: false);
-    }
-  }
-
-  // ------------------------------------------------------------
-  // SWIPE MOVEMENT
-  // ------------------------------------------------------------
-
-  void _handleSwipe(DragEndDetails details) {
-    if (isPaused || gameOver) return;
-
-    final velocity = details.velocity.pixelsPerSecond;
-
-    if (velocity.dx.abs() < 100 &&
-        velocity.dy.abs() < 100) {
-      return;
-    }
-
-    if (velocity.dx.abs() > velocity.dy.abs()) {
-      // Horizontal swipe.
-      _movePlayer(
-        rowDelta: 0,
-        colDelta: velocity.dx > 0 ? 1 : -1,
-      );
-    } else {
-      // Vertical swipe.
-      _movePlayer(
-        rowDelta: velocity.dy > 0 ? 1 : -1,
-        colDelta: 0,
-      );
-    }
-  }
-
-  void _movePlayer({
-    required int rowDelta,
-    required int colDelta,
-  }) {
-    if (isPaused || gameOver) return;
-
-    final int nextRow = player.y + rowDelta;
-    final int nextCol = player.x + colDelta;
-
-    if (nextRow < 0 ||
-        nextCol < 0 ||
-        nextRow >= mazeSize ||
-        nextCol >= mazeSize ||
-        maze[nextRow][nextCol]) {
-      setState(() {
-        wallBumps++;
-        feedbackText = 'Blocked! Find another route.';
-        feedbackColor = Colors.orangeAccent;
-      });
-      return;
-    }
-
-    final nextPosition = Point<int>(nextCol, nextRow);
-
-    if (nextPosition.x == goal.x &&
-        nextPosition.y == goal.y) {
-      _completeRound();
-      return;
-    }
-
-    setState(() {
-      player = nextPosition;
-      moves++;
-
-      feedbackText = 'Keep going!';
-      feedbackColor = Colors.white;
-    });
-  }
-
-  // ------------------------------------------------------------
-  // ROUND COMPLETION
-  // ------------------------------------------------------------
-
-  void _completeRound() {
-    roundTimer?.cancel();
-
-    final int bonus = secondsRemaining >= roundTimeLimit ~/ 2
-        ? 5
-        : 0;
-
-    setState(() {
-      roundsCompleted++;
-      moves++;
-
-      xp += 20 + bonus;
-
-      if (bestRoundTime == 0 ||
-          secondsRemaining > bestRoundTime) {
-        bestRoundTime = secondsRemaining;
-      }
-
-      feedbackText = bonus > 0
-          ? 'Exit found! +${20 + bonus} XP'
-          : 'Exit found! +20 XP';
-
-      feedbackColor = const Color(0xFF38EF7D);
-    });
-
-    _playSound('correct.mp3');
-
-    if (roundsCompleted >= maxRounds) {
-      _finishGame(completedAll: true);
-      return;
-    }
-
-    setState(() {
-      _generateMaze();
-      secondsRemaining = roundTimeLimit;
-    });
-
-    _startRoundTimer(resetTime: false);
-  }
-
-  // ------------------------------------------------------------
-  // PAUSE / RESUME
-  // ------------------------------------------------------------
-
-  void pauseGame() {
-    if (gameOver || isPaused) return;
-
-    roundTimer?.cancel();
-
-    setState(() {
-      isPaused = true;
-    });
-
-    _audioPlayer.pause();
-  }
-
-  void resumeGame() {
-    if (!isPaused || gameOver) return;
-
-    setState(() {
+      isGameOver = true;
       isPaused = false;
+      isSaving = true;
     });
 
-    _audioPlayer.resume();
-    _startRoundTimer(resetTime: false);
-  }
-
-  // ------------------------------------------------------------
-  // FINISH / SAVE SCORE
-  // ------------------------------------------------------------
-
-  void _finishGame({required bool completedAll}) {
-    if (gameOver) return;
-
-    roundTimer?.cancel();
-
-    setState(() {
-      gameOver = true;
-      isPaused = false;
-    });
-
-    if (completedAll) {
-      _playSound('level_complete.mp3');
-      confettiController.play();
-    } else {
-      _playSound('wrong.mp3');
-    }
-
-    _saveScore();
-  }
-
-  Future<void> _saveScore() async {
-    if (_scoreSaved) return;
-    _scoreSaved = true;
+    final grade = _gradeForAccuracy(accuracy);
 
     try {
       await FirebaseFirestore.instance.collection('scores').add({
         'level': 8,
         'levelName': 'Path Finder',
-        'completed': roundsCompleted >= maxRounds,
+        'completed': roundsCompleted == maxRounds,
         'roundsCompleted': roundsCompleted,
         'totalRounds': maxRounds,
-        'moves': moves,
-        'wallBumps': wallBumps,
+        'moves': totalMoves,
+        'wallBumps': mistakes,
         'livesRemaining': lives,
         'xp': xp,
         'accuracy': accuracy,
-        'grade': getGrade(),
-        'timestamp': DateTime.now(),
+        'grade': grade,
+        'timestamp': FieldValue.serverTimestamp(),
       });
-    } catch (e) {
-      debugPrint('Failed to save Path Finder score: $e');
+    } catch (error) {
+      debugPrint('Could not save Path Finder score: $error');
     }
+
+    if (mounted) setState(() => isSaving = false);
   }
 
-  // ------------------------------------------------------------
-  // RESTART
-  // ------------------------------------------------------------
-
-  void restartGame() {
-    roundTimer?.cancel();
-    _scoreSaved = false;
-
-    setState(() {
-      roundsCompleted = 0;
-      secondsRemaining = 38;
-      lives = startingLives;
-      moves = 0;
-      wallBumps = 0;
-      xp = 0;
-      bestRoundTime = 0;
-
-      isPaused = false;
-      gameOver = false;
-
-      feedbackText = 'Swipe to find the exit!';
-      feedbackColor = Colors.white;
-
-      _generateMaze();
-      secondsRemaining = roundTimeLimit;
-    });
-
-    confettiController.stop();
-    _startRoundTimer(resetTime: false);
-  }
-
-  @override
-  void dispose() {
-    roundTimer?.cancel();
-    confettiController.dispose();
-    _audioPlayer.dispose();
-    super.dispose();
-  }
-
-  // ------------------------------------------------------------
-  // MAIN BUILD
-  // ------------------------------------------------------------
-
-  
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Color(0xFF160B36),
-              Color(0xFF39216C),
-              Color(0xFF170B3D),
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Stack(
-              children: [
-                // YOUR EXISTING GAME SCREEN
-                Column(
-                  children: [
-                    _buildHeader(),
-                    const SizedBox(height: 8),
-                    _buildHud(),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: gameOver
-                          ? _buildResults()
-                          : _buildGameplay(),
-                    ),
-                  ],
-                ),
-
-                // PAUSE MENU OVERLAY
-                if (isPaused)
-                  Positioned.fill(
-                    child: PauseMenu(
-                      onResume: resumeGame,
-                      onRestart: restartGame,
-                      onOptions: () {},
-                      onMainMenu: () {
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-
-  // ------------------------------------------------------------
-  // HEADER
-  // ------------------------------------------------------------
-
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 9,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.black26,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFF64E7FF),
-                width: 1.5,
-              ),
-            ),
-            child: const Text(
-              'LEVEL 8: PATH FINDER',
-              style: TextStyle(
-                color: Color(0xFF64E7FF),
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.7,
-              ),
-            ),
-          ),
-          if (!gameOver && !isPaused)
-            IconButton(
-              onPressed: pauseGame,
-              tooltip: 'Pause game',
-              icon: const Icon(
-                Icons.pause_circle_filled_rounded,
-                color: Colors.white,
-                size: 34,
-              ),
-            )
-          else
-            const SizedBox(width: 48),
-        ],
-      ),
-    );
-  }
-
-  // ------------------------------------------------------------
-  // HUD
-  // ------------------------------------------------------------
-
-  Widget _buildHud() {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 10,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.25),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _hudItem('⭐ XP', '$xp', Colors.amber),
-          _hudItem('👣 MOVES', '$moves', Colors.cyanAccent),
-          _hudItem(
-            '❤️ LIVES',
-            '$lives',
-            Colors.pinkAccent,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _hudItem(String label, String value, Color color) {
-    return Column(
+  Widget _buildLives() {
+    return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
+      children: List.generate(startingLives, (index) {
+        return Padding(
+          padding: const EdgeInsets.only(left: 3),
+          child: Icon(
+            Icons.favorite_rounded,
+            color: index < lives ? redColor : Colors.white24,
+            size: 21,
           ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          value,
-          style: TextStyle(
-            color: color,
-            fontSize: 17,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-      ],
+        );
+      }),
     );
   }
 
-  // ------------------------------------------------------------
-  // GAMEPLAY
-  // ------------------------------------------------------------
+  Widget _buildStat(String label, String value, IconData icon) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        decoration: BoxDecoration(
+          color: panelColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: cyanColor, size: 19),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white60, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  Widget _buildGameplay() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'ROUND $currentRound / $maxRounds',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
+  Widget _buildGameBoard() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = min(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        final boardSize = max(0.0, available);
+
+        return Center(
+          child: SizedBox(
+            width: boardSize,
+            height: boardSize,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (details) => _handlePanStart(details, boardSize),
+              onPanUpdate: (details) => _handlePanUpdate(details, boardSize),
+              onPanEnd: _handlePanEnd,
+              child: CustomPaint(
+                painter: _MazePainter(
+                  maze: maze,
+                  size: mazeSize,
+                  start: start,
+                  goal: goal,
+                  tracedPath: tracedPath,
+                  revealMaze: isPreview || isMistakeReveal,
+                  isPreview: isPreview && !isMistakeReveal,
+                  showTryAgain: showTryAgain,
+                  backgroundColor: backgroundColor,
+                  wallColor: const Color(0xFF4B3472),
+                  corridorColor: const Color(0xFF211632),
+                  cyanColor: cyanColor,
+                  greenColor: greenColor,
+                  goldColor: goldColor,
+                  redColor: redColor,
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: secondsRemaining <= 8
-                      ? Colors.red.withOpacity(0.3)
-                      : Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: secondsRemaining <= 8
-                        ? Colors.redAccent
-                        : Colors.white24,
-                  ),
-                ),
-                child: Row(
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildResults() {
+    final grade = _gradeForAccuracy(accuracy);
+    final fullyCompleted = roundsCompleted == maxRounds;
+
+    return Container(
+      color: backgroundColor,
+      width: double.infinity,
+      child: SafeArea(
+        child: Stack(
+          alignment: Alignment.topCenter,
+          children: [
+            ConfettiWidget(
+              confettiController: confettiController,
+              blastDirectionality: BlastDirectionality.explosive,
+              shouldLoop: false,
+              numberOfParticles: 20,
+              maxBlastForce: 20,
+              minBlastForce: 8,
+            ),
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      Icons.timer_rounded,
-                      color: secondsRemaining <= 8
-                          ? Colors.redAccent
-                          : const Color(0xFFFFD700),
-                      size: 18,
+                      fullyCompleted
+                          ? Icons.emoji_events_rounded
+                          : Icons.psychology_alt_rounded,
+                      color: goldColor,
+                      size: 76,
                     ),
-                    const SizedBox(width: 5),
+                    const SizedBox(height: 12),
                     Text(
-                      '${secondsRemaining}s',
-                      style: TextStyle(
-                        color: secondsRemaining <= 8
-                            ? Colors.redAccent
-                            : const Color(0xFFFFD700),
+                      fullyCompleted ? 'PATH MASTER!' : 'NICE TRY!',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 30,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        Text(
-          'START  →  FIND THE EXIT',
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.7),
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-            letterSpacing: 1.1,
-          ),
-        ),
-
-        const SizedBox(height: 6),
-
-        Expanded(
-          child: Center(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final boardSize = min(
-                  constraints.maxWidth,
-                  constraints.maxHeight,
-                );
-
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onPanEnd: _handleSwipe,
-                  child: Container(
-                    width: boardSize,
-                    height: boardSize,
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF08051A),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: const Color(0xFF64E7FF),
-                        width: 2,
+                    const SizedBox(height: 8),
+                    Text(
+                      fullyCompleted
+                          ? 'You remembered every maze!'
+                          : 'Every attempt helps train your memory.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 15,
                       ),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black38,
-                          blurRadius: 14,
-                          offset: Offset(0, 6),
+                    ),
+                    const SizedBox(height: 24),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: panelColor,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: cyanColor.withOpacity(0.4)),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            grade,
+                            style: const TextStyle(
+                              color: goldColor,
+                              fontSize: 54,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const Text(
+                            'FINAL GRADE',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              letterSpacing: 2,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          _resultRow(
+                            'Mazes completed',
+                            '$roundsCompleted / $maxRounds',
+                          ),
+                          _resultRow('Total moves', '$totalMoves'),
+                          _resultRow('Trace mistakes', '$mistakes'),
+                          _resultRow('Lives remaining', '$lives'),
+                          _resultRow('XP earned', '+$xp'),
+                          _resultRow(
+                            'Completion',
+                            '${accuracy.toStringAsFixed(0)}%',
+                          ),
+                          if (isSaving)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 16),
+                              child: CircularProgressIndicator(
+                                color: cyanColor,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: restartGame,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('PLAY AGAIN'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: cyanColor,
+                          foregroundColor: backgroundColor,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ],
-                    ),
-                    child: GridView.builder(
-                      physics:
-                          const NeverScrollableScrollPhysics(),
-                      padding: EdgeInsets.zero,
-                      itemCount: mazeSize * mazeSize,
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: mazeSize,
-                        crossAxisSpacing: 1,
-                        mainAxisSpacing: 1,
                       ),
-                      itemBuilder: (context, index) {
-                        final row = index ~/ mazeSize;
-                        final col = index % mazeSize;
-
-                        final isPlayer =
-                            player.x == col && player.y == row;
-
-                        final isGoal =
-                            goal.x == col && goal.y == row;
-
-                        final isStart = row == 1 && col == 1;
-                        final isWall = maze[row][col];
-
-                        Color tileColor;
-
-                        if (isPlayer) {
-                          tileColor = const Color(0xFF38EF7D);
-                        } else if (isGoal) {
-                          tileColor = const Color(0xFFFFD700);
-                        } else if (isWall) {
-                          tileColor = const Color(0xFF241C42);
-                        } else if (isStart) {
-                          tileColor = const Color(0xFF315C9D);
-                        } else {
-                          tileColor = const Color(0xFFB6A8E8);
-                        }
-
-                        final double iconSize =
-                            max(7.0, boardSize / mazeSize * 0.72);
-
-                        return Container(
-                          color: tileColor,
-                          alignment: Alignment.center,
-                          child: isPlayer
-                              ? Icon(
-                                  Icons.directions_run_rounded,
-                                  size: iconSize,
-                                  color: const Color(0xFF073B20),
-                                )
-                              : isGoal
-                                  ? Icon(
-                                      Icons.flag_rounded,
-                                      size: iconSize,
-                                      color: const Color(0xFF563900),
-                                    )
-                                  : isStart
-                                      ? Icon(
-                                          Icons.play_arrow_rounded,
-                                          size: iconSize,
-                                          color: Colors.white,
-                                        )
-                                      : null,
-                        );
-                      },
                     ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        Text(
-          feedbackText,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: feedbackColor,
-            fontSize: 14,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-
-        const SizedBox(height: 5),
-
-        const Padding(
-          padding: EdgeInsets.only(bottom: 8),
-          child: Text(
-            'SWIPE UP, DOWN, LEFT OR RIGHT TO MOVE',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ------------------------------------------------------------
-  // RESULTS
-  // ------------------------------------------------------------
-
-  Widget _buildResults() {
-    final bool completedAll = roundsCompleted >= maxRounds;
-
-    return Stack(
-      alignment: Alignment.topCenter,
-      children: [
-        SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 18,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                completedAll
-                    ? '🏆 PATH MASTER!'
-                    : '🧩 KEEP EXPLORING!',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFFFD700),
-                  fontSize: 27,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                completedAll
-                    ? 'You found every exit!'
-                    : 'You completed $roundsCompleted of $maxRounds mazes.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 15,
-                ),
-              ),
-              const SizedBox(height: 22),
-
-              Container(
-                width: 104,
-                height: 104,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white,
-                  border: Border.all(
-                    color: const Color(0xFFFFD700),
-                    width: 4,
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black38,
-                      blurRadius: 12,
-                      offset: Offset(0, 5),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.grid_view_rounded),
+                        label: const Text('LEVEL SELECT'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white30),
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-                child: Center(
-                  child: Text(
-                    getGrade(),
-                    style: const TextStyle(
-                      color: Color(0xFF39216C),
-                      fontSize: 52,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
               ),
-
-              const SizedBox(height: 22),
-
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: Column(
-                  children: [
-                    _resultRow('Mazes completed', '$roundsCompleted / $maxRounds'),
-                    const Divider(color: Colors.white12),
-                    _resultRow('XP earned', '$xp ⭐'),
-                    const Divider(color: Colors.white12),
-                    _resultRow('Total moves', '$moves'),
-                    const Divider(color: Colors.white12),
-                    _resultRow('Wall bumps', '$wallBumps'),
-                    const Divider(color: Colors.white12),
-                    _resultRow('Accuracy', '${accuracy.toStringAsFixed(0)}%'),
-                    const Divider(color: Colors.white12),
-                    _resultRow('Grade', getGrade()),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              _GameButton(
-                text: 'PLAY AGAIN',
-                color: const Color(0xFFFF8008),
-                onPressed: restartGame,
-              ),
-
-              const SizedBox(height: 12),
-
-              _GameButton(
-                text: 'LEVEL SELECT',
-                color: const Color(0xFF38EF7D),
-                textColor: const Color(0xFF073B20),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
-
-        Align(
-          alignment: Alignment.topCenter,
-          child: ConfettiWidget(
-            confettiController: confettiController,
-            blastDirectionality: BlastDirectionality.explosive,
-            shouldLoop: false,
-            colors: const [
-              Color(0xFFFFD700),
-              Color(0xFF38EF7D),
-              Color(0xFF64E7FF),
-              Colors.pink,
-              Colors.purple,
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
   Widget _resultRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Flexible(
+          Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
           ),
-          const SizedBox(width: 12),
           Text(
             value,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
             ),
           ),
         ],
       ),
     );
   }
-}
-
-// --------------------------------------------------------------
-// REUSABLE BUTTON
-// --------------------------------------------------------------
-
-class _GameButton extends StatelessWidget {
-  final String text;
-  final Color color;
-  final Color textColor;
-  final VoidCallback onPressed;
-
-  const _GameButton({
-    required this.text,
-    required this.color,
-    this.textColor = Colors.white,
-    required this.onPressed,
-  });
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 220,
-      height: 50,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: textColor,
-          elevation: 5,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(
-              color: Colors.white70,
-              width: 1.5,
+    if (isGameOver) return _buildResults();
+
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.explore_rounded,
+                        color: cyanColor,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'PATH FINDER',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                            Text(
+                              'Level 8 • Memory Challenge',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Pause',
+                        onPressed: pauseGame,
+                        icon: const Icon(
+                          Icons.pause_circle_filled_rounded,
+                          color: cyanColor,
+                          size: 34,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      _buildStat(
+                        'ROUND',
+                        '$currentRound/$maxRounds',
+                        Icons.flag_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStat(
+                        'TIME',
+                        '${secondsRemaining}s',
+                        Icons.timer_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStat('XP', '$xp', Icons.bolt_rounded),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Text(
+                        'LIVES',
+                        style: TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      _buildLives(),
+                      const Spacer(),
+                      Text(
+                        isMistakeReveal
+                            ? 'Review your mistake'
+                            : isPreview
+                                ? 'MEMORIZE THE MAZE'
+                                : 'TRACE TO THE FINISH',
+                        style: TextStyle(
+                          color: showTryAgain ? redColor : cyanColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF180F2B),
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: _buildGameBoard(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: Container(
+                      key: ValueKey<String>(
+                        showTryAgain
+                            ? 'mistake'
+                            : isPreview
+                                ? 'preview'
+                                : 'trace',
+                      ),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                        horizontal: 14,
+                      ),
+                      decoration: BoxDecoration(
+                        color: showTryAgain
+                            ? redColor.withOpacity(0.12)
+                            : panelColor,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: showTryAgain
+                              ? redColor.withOpacity(0.6)
+                              : Colors.white10,
+                        ),
+                      ),
+                      child: Text(
+                        showTryAgain
+                            ? 'TRY AGAIN! Study the revealed maze.'
+                            : isPreview
+                                ? 'Memorize the route before the maze hides.'
+                                : 'Drag from START through the corridors to FINISH.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: showTryAgain ? redColor : Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
-        child: Text(
-          text,
-          style: const TextStyle(
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1,
-          ),
+            if (isPaused)
+              Positioned.fill(
+                child: PauseMenu(
+                  onResume: resumeGame,
+                  onRestart: restartGame,
+                  onOptions: () {},
+                  onMainMenu: () {
+                    Navigator.pop(context);
+                  },
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
+}
+
+class _MazePainter extends CustomPainter {
+  final List<List<bool>> maze;
+  final int size;
+  final Point<int> start;
+  final Point<int> goal;
+  final List<Point<int>> tracedPath;
+  final bool revealMaze;
+  final bool isPreview;
+  final bool showTryAgain;
+  final Color backgroundColor;
+  final Color wallColor;
+  final Color corridorColor;
+  final Color cyanColor;
+  final Color greenColor;
+  final Color goldColor;
+  final Color redColor;
+
+  _MazePainter({
+    required this.maze,
+    required this.size,
+    required this.start,
+    required this.goal,
+    required this.tracedPath,
+    required this.revealMaze,
+    required this.isPreview,
+    required this.showTryAgain,
+    required this.backgroundColor,
+    required this.wallColor,
+    required this.corridorColor,
+    required this.cyanColor,
+    required this.greenColor,
+    required this.goldColor,
+    required this.redColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size canvasSize) {
+    if (size <= 0) return;
+
+    final cellSize = canvasSize.width / size;
+    final paint = Paint()..style = PaintingStyle.fill;
+
+    // Draw the board. Hidden walls and corridors have the same appearance.
+    for (int y = 0; y < size; y++) {
+      for (int x = 0; x < size; x++) {
+        final rect = Rect.fromLTWH(
+          x * cellSize,
+          y * cellSize,
+          cellSize,
+          cellSize,
+        );
+
+        if (revealMaze) {
+          paint.color = maze[y][x] ? corridorColor : wallColor;
+        } else {
+          paint.color = const Color(0xFF241A35);
+        }
+
+        canvas.drawRect(rect, paint);
+
+        paint
+          ..color = Colors.white.withOpacity(0.035)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.6;
+        canvas.drawRect(rect, paint);
+        paint.style = PaintingStyle.fill;
+      }
+    }
+
+    // Draw the player's route, whether or not the maze is visible.
+    if (tracedPath.isNotEmpty) {
+      final pathPaint = Paint()
+        ..color = showTryAgain ? redColor : cyanColor
+        ..strokeWidth = cellSize * 0.42
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
+
+      final path = Path();
+      final first = tracedPath.first;
+      path.moveTo(
+        (first.x + 0.5) * cellSize,
+        (first.y + 0.5) * cellSize,
+      );
+
+      for (int i = 1; i < tracedPath.length; i++) {
+        final point = tracedPath[i];
+        path.lineTo(
+          (point.x + 0.5) * cellSize,
+          (point.y + 0.5) * cellSize,
+        );
+      }
+
+      canvas.drawPath(path, pathPaint);
+    }
+
+    _drawMarker(
+      canvas,
+      start,
+      cellSize,
+      greenColor,
+      'S',
+    );
+    _drawMarker(
+      canvas,
+      goal,
+      cellSize,
+      goldColor,
+      'F',
+    );
+
+    if (showTryAgain) {
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: 'TRY AGAIN!',
+          style: TextStyle(
+            color: redColor,
+            fontSize: min(22.0, cellSize * 1.2),
+            fontWeight: FontWeight.w900,
+            shadows: const [
+              Shadow(color: Colors.black, blurRadius: 8),
+            ],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
+      )..layout(maxWidth: canvasSize.width);
+
+      textPainter.paint(
+        canvas,
+        Offset(
+          (canvasSize.width - textPainter.width) / 2,
+          8,
+        ),
+      );
+    }
+  }
+
+  void _drawMarker(
+    Canvas canvas,
+    Point<int> point,
+    double cellSize,
+    Color color,
+    String label,
+  ) {
+    final center = Offset(
+      (point.x + 0.5) * cellSize,
+      (point.y + 0.5) * cellSize,
+    );
+
+    final paint = Paint()..color = color;
+    canvas.drawCircle(center, cellSize * 0.37, paint);
+
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: const Color(0xFF160E25),
+          fontSize: cellSize * 0.45,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    textPainter.paint(
+      canvas,
+      Offset(
+        center.dx - textPainter.width / 2,
+        center.dy - textPainter.height / 2,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MazePainter oldDelegate) => true;
 }
