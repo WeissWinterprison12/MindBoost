@@ -32,6 +32,9 @@ class _PathFinderState extends State<PathFinder> {
   final ConfettiController confettiController =
       ConfettiController(duration: const Duration(seconds: 3));
 
+  // Keep track of maze layouts used during this game session.
+  final Set<String> usedMazeSignatures = {};
+
   Timer? gameTimer;
 
   int currentRound = 1;
@@ -75,6 +78,7 @@ class _PathFinderState extends State<PathFinder> {
     super.dispose();
   }
 
+  // Each round uses a larger maze.
   int _sizeForRound(int round) {
     switch (round) {
       case 1:
@@ -99,14 +103,18 @@ class _PathFinderState extends State<PathFinder> {
   }
 
   void _prepareRound() {
+    if (isGameOver || lives <= 0) return;
+
     gameTimer?.cancel();
 
     mazeSize = _sizeForRound(currentRound);
     goal = Point<int>(mazeSize - 2, mazeSize - 2);
+
     previewTimeLimit = _previewSecondsForRound(currentRound);
     solveTimeLimit = _solveSecondsForRound(currentRound);
 
-    maze = _generateMaze(mazeSize);
+    // Generate a fresh maze for every new attempt.
+    maze = _generateFreshMaze(mazeSize);
     tracedPath = [start];
 
     isPreview = true;
@@ -116,13 +124,13 @@ class _PathFinderState extends State<PathFinder> {
     secondsRemaining = previewTimeLimit;
     hasStarted = true;
 
-    _startTimer();
-
     if (mounted) setState(() {});
+    _startTimer();
   }
 
+  // Generates a maze using randomized depth-first search.
+  // true = corridor; false = wall.
   List<List<bool>> _generateMaze(int size) {
-    // true = walkable corridor; false = wall.
     final grid = List.generate(
       size,
       (_) => List<bool>.filled(size, false),
@@ -166,6 +174,7 @@ class _PathFinderState extends State<PathFinder> {
       }
 
       final next = neighbors[random.nextInt(neighbors.length)];
+
       final middle = Point<int>(
         (current.x + next.x) ~/ 2,
         (current.y + next.y) ~/ 2,
@@ -184,42 +193,62 @@ class _PathFinderState extends State<PathFinder> {
     return grid;
   }
 
+  // Avoid reusing a layout within this session when possible.
+  List<List<bool>> _generateFreshMaze(int size) {
+    for (int attempt = 0; attempt < 100; attempt++) {
+      final candidate = _generateMaze(size);
+
+      final signature = candidate
+          .map((row) => row.map((cell) => cell ? '1' : '0').join())
+          .join();
+
+      if (usedMazeSignatures.add(signature)) {
+        return candidate;
+      }
+    }
+
+    // Fallback: still a valid randomized maze.
+    return _generateMaze(size);
+  }
+
   void _startTimer() {
     gameTimer?.cancel();
 
-    gameTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted || isPaused || isGameOver) return;
+    gameTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (timer) {
+        if (!mounted || isPaused || isGameOver) return;
 
-      if (secondsRemaining > 1) {
-        setState(() => secondsRemaining--);
-        return;
-      }
+        // A wrong move reveals the maze briefly.
+        // When that reveal expires, remove one life and generate
+        // a fresh maze for the same round.
+        if (isMistakeReveal) {
+          if (secondsRemaining > 1) {
+            setState(() => secondsRemaining--);
+          } else {
+            _resolveFailedAttempt();
+          }
+          return;
+        }
 
-      if (isMistakeReveal) {
-        // Show the mistake briefly, then give the player another preview.
-        setState(() {
-          isMistakeReveal = false;
-          showTryAgain = false;
-          isPreview = true;
-          tracedPath = [start];
-          isDragging = false;
-          secondsRemaining = previewTimeLimit;
-        });
-        return;
-      }
+        if (secondsRemaining > 1) {
+          setState(() => secondsRemaining--);
+          return;
+        }
 
-      if (isPreview) {
-        // Preview is over. Hide the maze and begin the tracing timer.
-        setState(() {
-          isPreview = false;
-          secondsRemaining = solveTimeLimit;
-        });
-        return;
-      }
+        if (isPreview) {
+          // The preview has ended. Hide the maze and start solving.
+          setState(() {
+            isPreview = false;
+            secondsRemaining = solveTimeLimit;
+          });
+          return;
+        }
 
-      // The player ran out of time.
-      _loseLifeForTimeout();
-    });
+        // The player ran out of solving time.
+        _loseLifeForTimeout();
+      },
+    );
   }
 
   Future<void> _playSound(String filename) async {
@@ -227,7 +256,7 @@ class _PathFinderState extends State<PathFinder> {
       await audioPlayer.stop();
       await audioPlayer.play(AssetSource('sounds/$filename'));
     } catch (_) {
-      // A missing sound should not prevent the game from working.
+      // Missing audio should not break gameplay.
     }
   }
 
@@ -236,14 +265,15 @@ class _PathFinderState extends State<PathFinder> {
         isGameOver ||
         isPreview ||
         isMistakeReveal ||
-        !hasStarted) {
+        !hasStarted ||
+        tracedPath.isEmpty) {
       return;
     }
 
     final cell = _positionToCell(details.localPosition, boardSize);
     if (cell == null) return;
 
-    // Start a drag from the beginning or from the current trace endpoint.
+    // The drag must begin at START or the current endpoint.
     if (cell == tracedPath.last) {
       setState(() => isDragging = true);
     }
@@ -254,7 +284,8 @@ class _PathFinderState extends State<PathFinder> {
         isPaused ||
         isGameOver ||
         isPreview ||
-        isMistakeReveal) {
+        isMistakeReveal ||
+        tracedPath.isEmpty) {
       return;
     }
 
@@ -263,8 +294,9 @@ class _PathFinderState extends State<PathFinder> {
 
     final last = tracedPath.last;
 
-    // Allow the player to backtrack along their existing route.
-    if (tracedPath.length >= 2 && cell == tracedPath[tracedPath.length - 2]) {
+    // Allow the player to backtrack one step.
+    if (tracedPath.length >= 2 &&
+        cell == tracedPath[tracedPath.length - 2]) {
       setState(() {
         tracedPath.removeLast();
         totalMoves++;
@@ -272,12 +304,15 @@ class _PathFinderState extends State<PathFinder> {
       return;
     }
 
-    // Cells must be connected orthogonally. Skipping across cells is not
-    // allowed, because the route needs to follow the maze corridors.
-    final distance = (cell.x - last.x).abs() + (cell.y - last.y).abs();
+    // Only orthogonally adjacent cells are valid.
+    // Ignore skipped cells because fast finger movement can cause
+    // Flutter to report pointer updates several cells apart.
+    final distance =
+        (cell.x - last.x).abs() + (cell.y - last.y).abs();
+
     if (distance != 1) return;
 
-    // Touching a wall reveals the complete maze and lets the player retry.
+    // Hitting a wall reveals the complete maze.
     if (!_isWalkable(cell)) {
       _triggerMistake();
       return;
@@ -327,6 +362,8 @@ class _PathFinderState extends State<PathFinder> {
     return maze[point.y][point.x];
   }
 
+  // Wrong path: show the maze first.
+  // Do not deduct a life until the reveal finishes.
   void _triggerMistake() {
     if (isMistakeReveal || isPreview || isGameOver) return;
 
@@ -340,37 +377,54 @@ class _PathFinderState extends State<PathFinder> {
       showTryAgain = true;
       secondsRemaining = 2;
     });
-  }
-
-  void _loseLifeForTimeout() {
-    gameTimer?.cancel();
-    _playSound('timeout.mp3');
-
-    lives--;
-
-    if (lives <= 0) {
-      _finishGame();
-      return;
-    }
-
-    setState(() {
-      isPreview = true;
-      isMistakeReveal = false;
-      showTryAgain = false;
-      isDragging = false;
-      tracedPath = [start];
-      secondsRemaining = previewTimeLimit;
-    });
 
     _startTimer();
   }
 
+  // After the two-second reveal, remove one heart and retry
+  // the SAME round with a fresh maze.
+  void _resolveFailedAttempt() {
+    if (isGameOver || !isMistakeReveal) return;
+
+    gameTimer?.cancel();
+
+    lives = max(0, lives - 1);
+
+    if (lives == 0) {
+      _finishGame();
+      return;
+    }
+
+    _prepareRound();
+  }
+
+  // Timeout costs one heart and also creates a new maze.
+  void _loseLifeForTimeout() {
+    if (isGameOver) return;
+
+    gameTimer?.cancel();
+    _playSound('timeout.mp3');
+
+    lives = max(0, lives - 1);
+
+    if (lives == 0) {
+      _finishGame();
+      return;
+    }
+
+    _prepareRound();
+  }
+
   void _completeRound() {
+    if (isGameOver) return;
+
     gameTimer?.cancel();
     _playSound('correct.mp3');
 
     roundsCompleted++;
-    final timeBonus = secondsRemaining >= (solveTimeLimit ~/ 2) ? 10 : 0;
+
+    final timeBonus =
+        secondsRemaining >= (solveTimeLimit ~/ 2) ? 10 : 0;
     xp += 20 + timeBonus;
 
     if (roundsCompleted >= maxRounds) {
@@ -392,18 +446,22 @@ class _PathFinderState extends State<PathFinder> {
 
   void pauseGame() {
     if (isGameOver || isPaused) return;
+
     gameTimer?.cancel();
     setState(() => isPaused = true);
   }
 
   void resumeGame() {
     if (isGameOver || !isPaused) return;
+
     setState(() => isPaused = false);
     _startTimer();
   }
 
   void restartGame() {
     gameTimer?.cancel();
+
+    usedMazeSignatures.clear();
 
     setState(() {
       currentRound = 1;
@@ -415,6 +473,7 @@ class _PathFinderState extends State<PathFinder> {
       isPaused = false;
       isGameOver = false;
       isSaving = false;
+      isDragging = false;
     });
 
     _prepareRound();
@@ -484,7 +543,10 @@ class _PathFinderState extends State<PathFinder> {
   Widget _buildStat(String label, String value, IconData icon) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        padding: const EdgeInsets.symmetric(
+          vertical: 10,
+          horizontal: 6,
+        ),
         decoration: BoxDecoration(
           color: panelColor,
           borderRadius: BorderRadius.circular(14),
@@ -505,7 +567,10 @@ class _PathFinderState extends State<PathFinder> {
             Text(
               label,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white60, fontSize: 10),
+              style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 10,
+              ),
             ),
           ],
         ),
@@ -528,8 +593,10 @@ class _PathFinderState extends State<PathFinder> {
             height: boardSize,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onPanStart: (details) => _handlePanStart(details, boardSize),
-              onPanUpdate: (details) => _handlePanUpdate(details, boardSize),
+              onPanStart: (details) =>
+                  _handlePanStart(details, boardSize),
+              onPanUpdate: (details) =>
+                  _handlePanUpdate(details, boardSize),
               onPanEnd: _handlePanEnd,
               child: CustomPaint(
                 painter: _MazePainter(
@@ -617,7 +684,9 @@ class _PathFinderState extends State<PathFinder> {
                       decoration: BoxDecoration(
                         color: panelColor,
                         borderRadius: BorderRadius.circular(22),
-                        border: Border.all(color: cyanColor.withOpacity(0.4)),
+                        border: Border.all(
+                          color: cyanColor.withOpacity(0.4),
+                        ),
                       ),
                       child: Column(
                         children: [
@@ -709,7 +778,10 @@ class _PathFinderState extends State<PathFinder> {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
             ),
           ),
           Text(
@@ -795,7 +867,11 @@ class _PathFinderState extends State<PathFinder> {
                         Icons.timer_rounded,
                       ),
                       const SizedBox(width: 8),
-                      _buildStat('XP', '$xp', Icons.bolt_rounded),
+                      _buildStat(
+                        'XP',
+                        '$xp',
+                        Icons.bolt_rounded,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 10),
@@ -875,7 +951,9 @@ class _PathFinderState extends State<PathFinder> {
                                 : 'Drag from START through the corridors to FINISH.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: showTryAgain ? redColor : Colors.white70,
+                          color: showTryAgain
+                              ? redColor
+                              : Colors.white70,
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                         ),
@@ -945,7 +1023,7 @@ class _MazePainter extends CustomPainter {
     final cellSize = canvasSize.width / size;
     final paint = Paint()..style = PaintingStyle.fill;
 
-    // Draw the board. Hidden walls and corridors have the same appearance.
+    // When hidden, walls and corridors look identical.
     for (int y = 0; y < size; y++) {
       for (int x = 0; x < size; x++) {
         final rect = Rect.fromLTWH(
@@ -955,11 +1033,9 @@ class _MazePainter extends CustomPainter {
           cellSize,
         );
 
-        if (revealMaze) {
-          paint.color = maze[y][x] ? corridorColor : wallColor;
-        } else {
-          paint.color = const Color(0xFF241A35);
-        }
+        paint.color = revealMaze
+            ? (maze[y][x] ? corridorColor : wallColor)
+            : const Color(0xFF241A35);
 
         canvas.drawRect(rect, paint);
 
@@ -967,12 +1043,13 @@ class _MazePainter extends CustomPainter {
           ..color = Colors.white.withOpacity(0.035)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 0.6;
+
         canvas.drawRect(rect, paint);
         paint.style = PaintingStyle.fill;
       }
     }
 
-    // Draw the player's route, whether or not the maze is visible.
+    // Draw the player's route.
     if (tracedPath.isNotEmpty) {
       final pathPaint = Paint()
         ..color = showTryAgain ? redColor : cyanColor
@@ -983,6 +1060,7 @@ class _MazePainter extends CustomPainter {
 
       final path = Path();
       final first = tracedPath.first;
+
       path.moveTo(
         (first.x + 0.5) * cellSize,
         (first.y + 0.5) * cellSize,
@@ -999,20 +1077,8 @@ class _MazePainter extends CustomPainter {
       canvas.drawPath(path, pathPaint);
     }
 
-    _drawMarker(
-      canvas,
-      start,
-      cellSize,
-      greenColor,
-      'S',
-    );
-    _drawMarker(
-      canvas,
-      goal,
-      cellSize,
-      goldColor,
-      'F',
-    );
+    _drawMarker(canvas, start, cellSize, greenColor, 'S');
+    _drawMarker(canvas, goal, cellSize, goldColor, 'F');
 
     if (showTryAgain) {
       final textPainter = TextPainter(
