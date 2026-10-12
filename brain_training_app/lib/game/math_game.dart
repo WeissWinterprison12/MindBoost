@@ -712,26 +712,18 @@ class _MathGameState extends State<MathGame> {
           ),
 
           // PAUSE BUTTON
+                    // PAUSE BUTTON
           if (!gameOver && !isPaused)
-            InkWell(
-              onTap: pauseGame,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: const Icon(
-                  Icons.pause_rounded,
-                  color: Colors.white,
-                  size: 26,
-                ),
+            IconButton(
+              onPressed: pauseGame,
+              icon: const Icon(
+                Icons.pause_circle_filled,
+                color: Colors.amber,
+                size: 32,
               ),
             )
           else
-            const SizedBox(width: 42),
+            const SizedBox(width: 48),
         ],
       ),
     );

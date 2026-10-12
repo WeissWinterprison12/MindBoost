@@ -474,18 +474,17 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // UI COMPONENTS
   // ------------------------------------------------------------
 
-  Widget _buildHeader() {
+    Widget _buildHeader() {
+    final bool pauseDisabled = gameEnded || checkingAnswer || roundFeedback;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Row(
         children: [
-          IconButton(
-            onPressed: _goToMainMenu,
-            icon: const Icon(
-              Icons.arrow_back_rounded,
-              color: Colors.white,
-            ),
-          ),
+          // Empty spacer (replaces the back button) so the
+          // title stays centered in the header.
+          const SizedBox(width: 48),
+
           const Expanded(
             child: Text(
               'MEMORY MATRIX',
@@ -498,15 +497,15 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
               ),
             ),
           ),
+
           IconButton(
-            onPressed:
-                (gameEnded || checkingAnswer || roundFeedback)
-                    ? null
-                    : _pauseGame,
-            icon: const Icon(
+            onPressed: pauseDisabled ? null : _pauseGame,
+            icon: Icon(
               Icons.pause_circle_filled,
-              color: Colors.white,
-              size: 30,
+              color: pauseDisabled
+                  ? Colors.amber.withValues(alpha: 0.4)
+                  : Colors.amber,
+              size: 32,
             ),
           ),
         ],

@@ -118,7 +118,7 @@ class _GameLoadingScreenState extends State<GameLoadingScreen>
                       ),
                       child: Center(
                         child: Image.asset(
-                          'assets/images/mindboost_logo.png',
+                          'assets/images/mindboost_logo.jpg',
                           width: 100,
                           height: 100,
                           fit: BoxFit.contain,

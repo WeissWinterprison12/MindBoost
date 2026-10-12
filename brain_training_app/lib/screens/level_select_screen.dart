@@ -7,6 +7,7 @@ import '../game/pattern_logic.dart';
 import '../game/sequence.dart';
 import '../game/memory_matrix.dart';
 import '../game/logic_detective.dart';
+import '../game/path_finder.dart';
 import '../widgets/game_loading_screen.dart';
 
 class LevelSelectScreen extends StatelessWidget {
@@ -253,13 +254,23 @@ class LevelSelectScreen extends StatelessWidget {
                       unlocked: true,
                       page: const LogicDetective(),
                     ),
-
-                    // Levels 8–10 remain locked for now.
-                    const LockedLevelCard(
+              
+                    // LEVEL 8: PATH FINDER
+                    GameLevelCard(
                       levelNum: "8",
-                      title: "Coming Soon",
-                      subtitle: "More brain challenges ahead!",
+                      title: "Path Finder",
+                      subtitle: "Navigate the Maze",
+                      icon: "🧭",
+                      gradientColors: const [
+                        Color(0xFF39216C),
+                        Color(0xFF160B36),
+                      ],
+                      borderColor: const Color(0xFF64E7FF),
+                      starsEarned: 0,
+                      unlocked: true,
+                      page: const PathFinder(),
                     ),
+                    
                     const LockedLevelCard(
                       levelNum: "9",
                       title: "Coming Soon",

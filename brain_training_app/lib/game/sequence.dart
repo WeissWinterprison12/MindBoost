@@ -444,7 +444,9 @@ class _SequenceRecallState extends State<SequenceRecall> {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: hasValue ? const Color(0xFFFF4081) : Colors.black.withAlpha(64),
+              color: hasValue
+                  ? const Color(0xFFFF4081)
+                  : Colors.black.withAlpha(64),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: hasValue ? Colors.white : Colors.white.withAlpha(97),
@@ -489,7 +491,8 @@ class _SequenceRecallState extends State<SequenceRecall> {
           color: disabled ? Colors.white.withAlpha(31) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: disabled ? Colors.white.withAlpha(61) : const Color(0xFFFFD700),
+            color:
+                disabled ? Colors.white.withAlpha(61) : const Color(0xFFFFD700),
             width: 2,
           ),
           boxShadow: disabled
@@ -547,7 +550,10 @@ class _SequenceRecallState extends State<SequenceRecall> {
                   passed
                       ? 'Excellent sequence memory!'
                       : 'You were unable to complete the sequence challenge.',
-                  style: TextStyle(fontSize: 15, color: Colors.white.withAlpha(178)),
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.white.withAlpha(178),
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 20),
@@ -572,19 +578,31 @@ class _SequenceRecallState extends State<SequenceRecall> {
                 const SizedBox(height: 6),
                 Text(
                   passed ? '⭐ XP Earned: +$xp' : '⭐ XP Earned: 0',
-                  style: TextStyle(fontSize: 18, color: Colors.white.withAlpha(222)),
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.white.withAlpha(222),
+                  ),
                 ),
                 Text(
                   '🧠 Rounds: $correctRounds/$totalRounds',
-                  style: TextStyle(fontSize: 18, color: Colors.white.withAlpha(222)),
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.white.withAlpha(222),
+                  ),
                 ),
                 Text(
                   '❌ Wrong Rounds: $wrongRounds',
-                  style: TextStyle(fontSize: 18, color: Colors.white.withAlpha(222)),
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.white.withAlpha(222),
+                  ),
                 ),
                 Text(
                   '⏱ Time Used: ${timeUsed}s',
-                  style: TextStyle(fontSize: 18, color: Colors.white.withAlpha(222)),
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.white.withAlpha(222),
+                  ),
                 ),
                 const SizedBox(height: 25),
                 SizedBox(
@@ -614,7 +632,10 @@ class _SequenceRecallState extends State<SequenceRecall> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.white.withAlpha(153), width: 2),
+                      side: BorderSide(
+                        color: Colors.white.withAlpha(153),
+                        width: 2,
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -645,7 +666,8 @@ class _SequenceRecallState extends State<SequenceRecall> {
                         ),
                       ),
                       onPressed: goToNextLevel,
-                      icon: const Icon(Icons.arrow_forward, color: Colors.white),
+                      icon:
+                          const Icon(Icons.arrow_forward, color: Colors.white),
                       label: const Text(
                         'Next Level',
                         style: TextStyle(
@@ -680,78 +702,134 @@ class _SequenceRecallState extends State<SequenceRecall> {
               _buildStatBadge("ROUND", "$currentRound/$totalRounds"),
             ],
           ),
-          const SizedBox(height: 20),
-          Text(
-            showingSequence ? 'MEMORIZE THE SEQUENCE' : 'REPEAT THE SEQUENCE',
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFFFFD700),
-              letterSpacing: 1.1,
+
+          // Both phases are centered in the space under the badges.
+          Expanded(
+            child: Center(
+              // Scrolls only if a small screen can't fit the content.
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: showingSequence
+                    ? _buildMemorizePhase()
+                    : _buildRepeatPhase(),
+              ),
             ),
-            textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 4),
-          Text(
-            showingSequence
-                ? 'Remember the symbols in order.'
-                : 'Tap the symbols in the same order.',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withAlpha(178),
-              fontWeight: FontWeight.w600,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 25),
-          if (showingSequence) buildSequenceDisplay(),
-          if (!showingSequence) ...[
-            Text(
-              'YOUR SEQUENCE',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.white.withAlpha(178),
-                letterSpacing: 1,
-              ),
-            ),
-            const SizedBox(height: 10),
-            buildPlayerSequence(),
-            const SizedBox(height: 25),
-            Text(
-              'CHOOSE SYMBOLS',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.white.withAlpha(178),
-                letterSpacing: 1,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10,
-              runSpacing: 10,
-              children: symbols
-                  .map((symbol) => buildSymbolButton(symbol))
-                  .toList(),
-            ),
-          ],
-          if (roundFeedback) ...[
-            const SizedBox(height: 20),
-            Text(
-              lastRoundCorrect ? '✅ CORRECT!' : '❌ WRONG!',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                color: lastRoundCorrect
-                    ? const Color(0xFF38EF7D)
-                    : const Color(0xFFFF4B2B),
-              ),
-            ),
-          ],
         ],
       ),
+    );
+  }
+
+  // ==================================================
+  // PHASE 1: MEMORIZE
+  // ==================================================
+  Widget _buildMemorizePhase() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'MEMORIZE THE SEQUENCE',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFFFFD700),
+            letterSpacing: 1.1,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Remember the symbols in order.',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withAlpha(178),
+            fontWeight: FontWeight.w600,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 25),
+        buildSequenceDisplay(),
+      ],
+    );
+  }
+
+  // ==================================================
+  // PHASE 2: REPEAT
+  // ==================================================
+  Widget _buildRepeatPhase() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'REPEAT THE SEQUENCE',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFFFFD700),
+            letterSpacing: 1.1,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Tap the symbols in the same order.',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withAlpha(178),
+            fontWeight: FontWeight.w600,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 25),
+        Text(
+          'YOUR SEQUENCE',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white.withAlpha(178),
+            letterSpacing: 1,
+          ),
+        ),
+        const SizedBox(height: 10),
+        buildPlayerSequence(),
+        const SizedBox(height: 25),
+        Text(
+          'CHOOSE SYMBOLS',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white.withAlpha(178),
+            letterSpacing: 1,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 10,
+          runSpacing: 10,
+          children:
+              symbols.map((symbol) => buildSymbolButton(symbol)).toList(),
+        ),
+
+        // Space is always reserved for the feedback text, so the
+        // centered content doesn't jump when it appears.
+        const SizedBox(height: 20),
+        SizedBox(
+          height: 30,
+          child: roundFeedback
+              ? Text(
+                  lastRoundCorrect ? '✅ CORRECT!' : '❌ WRONG!',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: lastRoundCorrect
+                        ? const Color(0xFF38EF7D)
+                        : const Color(0xFFFF4B2B),
+                  ),
+                )
+              : null,
+        ),
+      ],
     );
   }
 
@@ -784,14 +862,10 @@ class _SequenceRecallState extends State<SequenceRecall> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _build3DButton(
-                          onTap: goToMainMenu,
-                          child: const Icon(
-                            Icons.arrow_back_rounded,
-                            color: Colors.white,
-                            size: 26,
-                          ),
-                        ),
+                        // Empty spacer (replaces the back button) so the
+                        // title badge stays centered in the header.
+                        const SizedBox(width: 48),
+
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 18,
@@ -815,17 +889,18 @@ class _SequenceRecallState extends State<SequenceRecall> {
                             ),
                           ),
                         ),
+
                         if (!completed)
-                          _build3DButton(
-                            onTap: pauseGame,
-                            child: const Icon(
-                              Icons.pause_rounded,
-                              color: Colors.white,
-                              size: 26,
+                          IconButton(
+                            onPressed: pauseGame,
+                            icon: const Icon(
+                              Icons.pause_circle_filled,
+                              color: Colors.amber,
+                              size: 32,
                             ),
                           )
                         else
-                          const SizedBox(width: 46),
+                          const SizedBox(width: 48),
                       ],
                     ),
                   ),
@@ -862,35 +937,6 @@ class _SequenceRecallState extends State<SequenceRecall> {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  static Widget _build3DButton({
-    required VoidCallback onTap,
-    required Widget child,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF4081),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0xFF990033),
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: child,
           ),
         ),
       ),

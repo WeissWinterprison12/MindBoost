@@ -63,7 +63,7 @@ flutter:
   assets:
     - assets/sounds/
     - assets/images/science/
-    - assets/images/mindboost_logo.png
+    - assets/images/mindboost_logo.jpg
     - assets/images/level7/garden_mystery.png
     - assets/images/level7/library_book.png
     - assets/images/level7/missing_pencil.png

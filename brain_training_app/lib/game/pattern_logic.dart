@@ -519,13 +519,8 @@ class _PatternLogicState extends State<PatternLogic>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            IconButton(
-              onPressed: goToMainMenu,
-              icon: const Icon(
-                Icons.arrow_back_ios_new,
-                color: Colors.white,
-              ),
-            ),
+            const SizedBox(width: 48),
+            
             Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: 16,
