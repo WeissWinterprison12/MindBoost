@@ -8,6 +8,7 @@ import '../game/sequence.dart';
 import '../game/memory_matrix.dart';
 import '../game/logic_detective.dart';
 import '../game/path_finder.dart';
+import '../game/word_quest.dart';
 import '../widgets/game_loading_screen.dart';
 
 class LevelSelectScreen extends StatelessWidget {
@@ -271,11 +272,23 @@ class LevelSelectScreen extends StatelessWidget {
                       page: const PathFinder(),
                     ),
                     
-                    const LockedLevelCard(
+                    // LEVEL 9: 4 PICS 1 WORD
+                    GameLevelCard(
                       levelNum: "9",
-                      title: "Coming Soon",
-                      subtitle: "More brain challenges ahead!",
+                      title: "Word Quest",
+                      subtitle: "Four Pics, One Word",
+                      icon: "🧩",
+                      gradientColors: const [
+                        Color(0xFF7C83FF),
+                        Color(0xFF5146D8),
+                      ],
+                      borderColor: const Color(0xFF3730A3),
+                      starsEarned: 0,
+                      unlocked: true,
+                      page: const WordQuestGame(),
                     ),
+
+
                     const LockedLevelCard(
                       levelNum: "10",
                       title: "Coming Soon",

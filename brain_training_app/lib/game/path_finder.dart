@@ -1,6 +1,6 @@
-
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -20,12 +20,11 @@ class _PathFinderState extends State<PathFinder> {
   static const int maxRounds = 5;
   static const int startingLives = 3;
 
-  static const Color backgroundColor = Color(0xFF10091F);
-  static const Color panelColor = Color(0xFF21143A);
-  static const Color cyanColor = Color(0xFF64E7FF);
-  static const Color greenColor = Color(0xFF55E6A5);
-  static const Color goldColor = Color(0xFFFFD166);
-  static const Color redColor = Color(0xFFFF6B81);
+  // Maze colors (purple theme, same family as the other levels).
+  static const Color wallColor = Color(0xFF3A0F52);
+  static const Color corridorColor = Color(0xFFEDE3FF);
+  static const Color startColor = Color(0xFF38EF7D);
+  static const Color finishColor = Color(0xFFFFD700);
 
   final Random random = Random();
   final AudioPlayer audioPlayer = AudioPlayer();
@@ -60,9 +59,9 @@ class _PathFinderState extends State<PathFinder> {
   bool showTryAgain = false;
   bool isPaused = false;
   bool isGameOver = false;
-  bool isSaving = false;
   bool isDragging = false;
   bool hasStarted = false;
+  bool isRoundComplete = false;
 
   @override
   void initState() {
@@ -77,6 +76,10 @@ class _PathFinderState extends State<PathFinder> {
     confettiController.dispose();
     super.dispose();
   }
+
+  // ============================================================
+  // ROUND SETTINGS
+  // ============================================================
 
   // Each round uses a larger maze.
   int _sizeForRound(int round) {
@@ -119,6 +122,7 @@ class _PathFinderState extends State<PathFinder> {
 
     isPreview = true;
     isMistakeReveal = false;
+    isRoundComplete = false;
     showTryAgain = false;
     isDragging = false;
     secondsRemaining = previewTimeLimit;
@@ -127,6 +131,10 @@ class _PathFinderState extends State<PathFinder> {
     if (mounted) setState(() {});
     _startTimer();
   }
+
+  // ============================================================
+  // MAZE GENERATION
+  // ============================================================
 
   // Generates a maze using randomized depth-first search.
   // true = corridor; false = wall.
@@ -211,6 +219,10 @@ class _PathFinderState extends State<PathFinder> {
     return _generateMaze(size);
   }
 
+  // ============================================================
+  // TIMER
+  // ============================================================
+
   void _startTimer() {
     gameTimer?.cancel();
 
@@ -260,11 +272,16 @@ class _PathFinderState extends State<PathFinder> {
     }
   }
 
+  // ============================================================
+  // TRACING INPUT
+  // ============================================================
+
   void _handlePanStart(DragStartDetails details, double boardSize) {
     if (isPaused ||
         isGameOver ||
         isPreview ||
         isMistakeReveal ||
+        isRoundComplete ||
         !hasStarted ||
         tracedPath.isEmpty) {
       return;
@@ -285,6 +302,7 @@ class _PathFinderState extends State<PathFinder> {
         isGameOver ||
         isPreview ||
         isMistakeReveal ||
+        isRoundComplete ||
         tracedPath.isEmpty) {
       return;
     }
@@ -307,8 +325,7 @@ class _PathFinderState extends State<PathFinder> {
     // Only orthogonally adjacent cells are valid.
     // Ignore skipped cells because fast finger movement can cause
     // Flutter to report pointer updates several cells apart.
-    final distance =
-        (cell.x - last.x).abs() + (cell.y - last.y).abs();
+    final distance = (cell.x - last.x).abs() + (cell.y - last.y).abs();
 
     if (distance != 1) return;
 
@@ -362,6 +379,10 @@ class _PathFinderState extends State<PathFinder> {
     return maze[point.y][point.x];
   }
 
+  // ============================================================
+  // MISTAKES / ROUND RESULTS
+  // ============================================================
+
   // Wrong path: show the maze first.
   // Do not deduct a life until the reveal finishes.
   void _triggerMistake() {
@@ -403,7 +424,7 @@ class _PathFinderState extends State<PathFinder> {
     if (isGameOver) return;
 
     gameTimer?.cancel();
-    _playSound('timeout.mp3');
+    _playSound('wrong.mp3');
 
     lives = max(0, lives - 1);
 
@@ -419,20 +440,23 @@ class _PathFinderState extends State<PathFinder> {
     if (isGameOver) return;
 
     gameTimer?.cancel();
-    _playSound('correct.mp3');
+
+    isRoundComplete = true;
+    isDragging = false;
 
     roundsCompleted++;
 
-    final timeBonus =
-        secondsRemaining >= (solveTimeLimit ~/ 2) ? 10 : 0;
+    final timeBonus = secondsRemaining >= (solveTimeLimit ~/ 2) ? 10 : 0;
     xp += 20 + timeBonus;
 
     if (roundsCompleted >= maxRounds) {
-      _playSound('level_complete.mp3');
+      _playSound('level up.mp3');
       confettiController.play();
       _finishGame();
       return;
     }
+
+    _playSound('correct.mp3');
 
     setState(() {
       currentRound++;
@@ -444,8 +468,12 @@ class _PathFinderState extends State<PathFinder> {
     });
   }
 
+  // ============================================================
+  // PAUSE / RESTART / NAVIGATION
+  // ============================================================
+
   void pauseGame() {
-    if (isGameOver || isPaused) return;
+    if (isGameOver || isPaused || isRoundComplete) return;
 
     gameTimer?.cancel();
     setState(() => isPaused = true);
@@ -460,6 +488,7 @@ class _PathFinderState extends State<PathFinder> {
 
   void restartGame() {
     gameTimer?.cancel();
+    audioPlayer.stop();
 
     usedMazeSignatures.clear();
 
@@ -472,12 +501,21 @@ class _PathFinderState extends State<PathFinder> {
       xp = 0;
       isPaused = false;
       isGameOver = false;
-      isSaving = false;
       isDragging = false;
+      isRoundComplete = false;
     });
 
     _prepareRound();
   }
+
+  void goToMainMenu() {
+    gameTimer?.cancel();
+    Navigator.pop(context);
+  }
+
+  // ============================================================
+  // SCORE / FIRESTORE
+  // ============================================================
 
   String _gradeForAccuracy(double accuracy) {
     if (accuracy >= 90) return 'S';
@@ -497,11 +535,12 @@ class _PathFinderState extends State<PathFinder> {
     setState(() {
       isGameOver = true;
       isPaused = false;
-      isSaving = true;
     });
 
     final grade = _gradeForAccuracy(accuracy);
 
+    // Saved in the background. The results screen never waits for it,
+    // so a missing or slow database cannot freeze the game.
     try {
       await FirebaseFirestore.instance.collection('scores').add({
         'level': 8,
@@ -516,280 +555,299 @@ class _PathFinderState extends State<PathFinder> {
         'accuracy': accuracy,
         'grade': grade,
         'timestamp': FieldValue.serverTimestamp(),
-      });
+      }).timeout(const Duration(seconds: 5));
     } catch (error) {
       debugPrint('Could not save Path Finder score: $error');
     }
-
-    if (mounted) setState(() => isSaving = false);
   }
 
-  Widget _buildLives() {
+  // ============================================================
+  // CHUNKY BUTTON
+  // ============================================================
+
+  Widget _buildChunkyButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        width: double.infinity,
+        height: 50,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.4),
+              offset: const Offset(0, 4),
+              blurRadius: 8,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // CUSTOM APP BAR
+  // ============================================================
+
+  Widget _buildCustomAppBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Empty spacer so the title badge stays centered.
+          const SizedBox(width: 48),
+
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: const Text(
+              'Path Finder',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ),
+
+          if (!isGameOver)
+            IconButton(
+              onPressed: isRoundComplete ? null : pauseGame,
+              icon: Icon(
+                Icons.pause_circle_filled,
+                color: isRoundComplete
+                    ? Colors.amber.withValues(alpha: 0.4)
+                    : Colors.amber,
+                size: 32,
+              ),
+            )
+          else
+            const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // HUD
+  // ============================================================
+
+  Widget _buildHudCard({
+    required IconData icon,
+    required String title,
+    required Widget value,
+  }) {
+    return Expanded(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Column(
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, color: Colors.white70, size: 14),
+                      const SizedBox(width: 4),
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: value,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hudText(String text, Color color) {
+    return Text(
+      text,
+      style: TextStyle(
+        color: color,
+        fontSize: 16,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+  }
+
+  Widget _buildHearts() {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: List.generate(startingLives, (index) {
         return Padding(
-          padding: const EdgeInsets.only(left: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 1),
           child: Icon(
             Icons.favorite_rounded,
-            color: index < lives ? redColor : Colors.white24,
-            size: 21,
+            color: index < lives ? Colors.redAccent : Colors.white24,
+            size: 17,
           ),
         );
       }),
     );
   }
 
-  Widget _buildStat(String label, String value, IconData icon) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          vertical: 10,
-          horizontal: 6,
+  Widget _buildHud() {
+    final Color timeColor = isMistakeReveal
+        ? Colors.redAccent
+        : isPreview
+            ? Colors.amber
+            : (secondsRemaining <= 5 ? Colors.redAccent : Colors.cyanAccent);
+
+    return Row(
+      children: [
+        _buildHudCard(
+          icon: Icons.flag_rounded,
+          title: 'ROUND',
+          value: _hudText('$currentRound/$maxRounds', Colors.amber),
         ),
-        decoration: BoxDecoration(
-          color: panelColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white10),
+        const SizedBox(width: 8),
+        _buildHudCard(
+          icon: Icons.timer_outlined,
+          title: 'TIME',
+          value: _hudText('${secondsRemaining}s', timeColor),
         ),
-        child: Column(
-          children: [
-            Icon(icon, color: cyanColor, size: 19),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white60,
-                fontSize: 10,
-              ),
-            ),
-          ],
+        const SizedBox(width: 8),
+        _buildHudCard(
+          icon: Icons.bolt_rounded,
+          title: 'XP',
+          value: _hudText('$xp', Colors.greenAccent),
         ),
-      ),
+        const SizedBox(width: 8),
+        _buildHudCard(
+          icon: Icons.favorite_rounded,
+          title: 'LIVES',
+          value: _buildHearts(),
+        ),
+      ],
     );
   }
 
-  Widget _buildGameBoard() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final available = min(
-          constraints.maxWidth,
-          constraints.maxHeight,
-        );
-        final boardSize = max(0.0, available);
+  // ============================================================
+  // GAMEPLAY
+  // ============================================================
 
-        return Center(
-          child: SizedBox(
-            width: boardSize,
-            height: boardSize,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanStart: (details) =>
-                  _handlePanStart(details, boardSize),
-              onPanUpdate: (details) =>
-                  _handlePanUpdate(details, boardSize),
-              onPanEnd: _handlePanEnd,
-              child: CustomPaint(
-                painter: _MazePainter(
-                  maze: maze,
-                  size: mazeSize,
-                  start: start,
-                  goal: goal,
-                  tracedPath: tracedPath,
-                  revealMaze: isPreview || isMistakeReveal,
-                  isPreview: isPreview && !isMistakeReveal,
-                  showTryAgain: showTryAgain,
-                  backgroundColor: backgroundColor,
-                  wallColor: const Color(0xFF4B3472),
-                  corridorColor: const Color(0xFF211632),
-                  cyanColor: cyanColor,
-                  greenColor: greenColor,
-                  goldColor: goldColor,
-                  redColor: redColor,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
+  Widget _buildGameplay() {
+    final String title = isMistakeReveal
+        ? 'TRY AGAIN!'
+        : isPreview
+            ? 'MEMORIZE THE MAZE'
+            : 'TRACE TO THE FINISH';
 
-  Widget _buildResults() {
-    final grade = _gradeForAccuracy(accuracy);
-    final fullyCompleted = roundsCompleted == maxRounds;
+    final Color titleColor = isMistakeReveal
+        ? Colors.redAccent
+        : isPreview
+            ? Colors.amber
+            : Colors.cyanAccent;
 
-    return Container(
-      color: backgroundColor,
-      width: double.infinity,
-      child: SafeArea(
-        child: Stack(
-          alignment: Alignment.topCenter,
-          children: [
-            ConfettiWidget(
-              confettiController: confettiController,
-              blastDirectionality: BlastDirectionality.explosive,
-              shouldLoop: false,
-              numberOfParticles: 20,
-              maxBlastForce: 20,
-              minBlastForce: 8,
-            ),
-            Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      fullyCompleted
-                          ? Icons.emoji_events_rounded
-                          : Icons.psychology_alt_rounded,
-                      color: goldColor,
-                      size: 76,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      fullyCompleted ? 'PATH MASTER!' : 'NICE TRY!',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 30,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      fullyCompleted
-                          ? 'You remembered every maze!'
-                          : 'Every attempt helps train your memory.',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: panelColor,
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(
-                          color: cyanColor.withOpacity(0.4),
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            grade,
-                            style: const TextStyle(
-                              color: goldColor,
-                              fontSize: 54,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const Text(
-                            'FINAL GRADE',
-                            style: TextStyle(
-                              color: Colors.white60,
-                              letterSpacing: 2,
-                              fontSize: 11,
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          _resultRow(
-                            'Mazes completed',
-                            '$roundsCompleted / $maxRounds',
-                          ),
-                          _resultRow('Total moves', '$totalMoves'),
-                          _resultRow('Trace mistakes', '$mistakes'),
-                          _resultRow('Lives remaining', '$lives'),
-                          _resultRow('XP earned', '+$xp'),
-                          _resultRow(
-                            'Completion',
-                            '${accuracy.toStringAsFixed(0)}%',
-                          ),
-                          if (isSaving)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 16),
-                              child: CircularProgressIndicator(
-                                color: cyanColor,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: restartGame,
-                        icon: const Icon(Icons.refresh_rounded),
-                        label: const Text('PLAY AGAIN'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: cyanColor,
-                          foregroundColor: backgroundColor,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.grid_view_rounded),
-                        label: const Text('LEVEL SELECT'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: const BorderSide(color: Colors.white30),
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+    final String hint = isMistakeReveal
+        ? 'Study the revealed maze.'
+        : isPreview
+            ? 'Memorize the route before the maze hides.'
+            : 'Drag from START (S) through the corridors to FINISH (F).';
 
-  Widget _resultRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Column(
         children: [
+          _buildHud(),
+          const SizedBox(height: 12),
           Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
+            child: LayoutBuilder(
+              builder: (context, area) {
+                // Leave room for the title above and hint below.
+                final double boardSize = max(
+                  0.0,
+                  min(
+                    min(area.maxWidth * 0.98, area.maxHeight - 90),
+                    420.0,
+                  ),
+                );
+
+                return Center(
+                  child: SingleChildScrollView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: titleColor,
+                            letterSpacing: 1.2,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 10),
+                        _buildBoard(boardSize),
+                        const SizedBox(height: 10),
+                        Text(
+                          hint,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -797,189 +855,283 @@ class _PathFinderState extends State<PathFinder> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (isGameOver) return _buildResults();
+  Widget _buildBoard(double outerSize) {
+    return SizedBox(
+      width: outerSize,
+      height: outerSize,
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // The exact drawing area, so touch positions line up
+            // perfectly with the maze cells.
+            final double boardSize = max(
+              0.0,
+              min(constraints.maxWidth, constraints.maxHeight),
+            );
 
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            return Center(
+              child: SizedBox(
+                width: boardSize,
+                height: boardSize,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: (details) =>
+                      _handlePanStart(details, boardSize),
+                  onPanUpdate: (details) =>
+                      _handlePanUpdate(details, boardSize),
+                  onPanEnd: _handlePanEnd,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: CustomPaint(
+                      painter: _MazePainter(
+                        maze: maze,
+                        size: mazeSize,
+                        start: start,
+                        goal: goal,
+                        tracedPath: tracedPath,
+                        revealMaze: isPreview || isMistakeReveal,
+                        showTryAgain: showTryAgain,
+                        wallColor: wallColor,
+                        corridorColor: corridorColor,
+                        hiddenColor: Colors.white.withValues(alpha: 0.14),
+                        pathColor: Colors.cyanAccent,
+                        mistakePathColor: Colors.redAccent,
+                        startColor: startColor,
+                        finishColor: finishColor,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // RESULT SCREEN
+  // ============================================================
+
+  Widget _buildStatBadge(String title, String value) {
+    return Column(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(color: Colors.white60, fontSize: 13),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildResultScreen() {
+    final String grade = _gradeForAccuracy(accuracy);
+    final bool fullyCompleted = roundsCompleted == maxRounds;
+
+    return Center(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white24),
+              ),
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
+                  Text(
+                    fullyCompleted ? '🎉 LEVEL COMPLETE!' : '💔 OUT OF LIVES!',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: fullyCompleted ? Colors.amber : Colors.redAccent,
+                      letterSpacing: 1,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  Text(
+                    fullyCompleted
+                        ? 'You remembered every maze!'
+                        : 'Every attempt helps train your memory.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white70,
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.amber),
+                    ),
+                    child: Text(
+                      'GRADE: $grade',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.amber,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      const Icon(
-                        Icons.explore_rounded,
-                        color: cyanColor,
-                        size: 28,
+                      _buildStatBadge('⭐ XP', '+$xp'),
+                      _buildStatBadge(
+                        '🧭 Mazes',
+                        '$roundsCompleted/$maxRounds',
                       ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'PATH FINDER',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 19,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                            Text(
-                              'Level 8 • Memory Challenge',
-                              style: TextStyle(
-                                color: Colors.white54,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Pause',
-                        onPressed: pauseGame,
-                        icon: const Icon(
-                          Icons.pause_circle_filled_rounded,
-                          color: cyanColor,
-                          size: 34,
-                        ),
-                      ),
+                      _buildStatBadge('❤️ Lives', '$lives'),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      _buildStat(
-                        'ROUND',
-                        '$currentRound/$maxRounds',
-                        Icons.flag_rounded,
-                      ),
-                      const SizedBox(width: 8),
-                      _buildStat(
-                        'TIME',
-                        '${secondsRemaining}s',
-                        Icons.timer_rounded,
-                      ),
-                      const SizedBox(width: 8),
-                      _buildStat(
-                        'XP',
-                        '$xp',
-                        Icons.bolt_rounded,
-                      ),
-                    ],
-                  ),
+
                   const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Text(
-                        'LIVES',
-                        style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                      _buildLives(),
-                      const Spacer(),
-                      Text(
-                        isMistakeReveal
-                            ? 'Review your mistake'
-                            : isPreview
-                                ? 'MEMORIZE THE MAZE'
-                                : 'TRACE TO THE FINISH',
-                        style: TextStyle(
-                          color: showTryAgain ? redColor : cyanColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF180F2B),
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(color: Colors.white12),
-                      ),
-                      child: _buildGameBoard(),
+
+                  Text(
+                    '👣 Moves: $totalMoves   •   🧱 Wall bumps: $mistakes',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: Container(
-                      key: ValueKey<String>(
-                        showTryAgain
-                            ? 'mistake'
-                            : isPreview
-                                ? 'preview'
-                                : 'trace',
-                      ),
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
-                        horizontal: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        color: showTryAgain
-                            ? redColor.withOpacity(0.12)
-                            : panelColor,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: showTryAgain
-                              ? redColor.withOpacity(0.6)
-                              : Colors.white10,
-                        ),
-                      ),
-                      child: Text(
-                        showTryAgain
-                            ? 'TRY AGAIN! Study the revealed maze.'
-                            : isPreview
-                                ? 'Memorize the route before the maze hides.'
-                                : 'Drag from START through the corridors to FINISH.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: showTryAgain
-                              ? redColor
-                              : Colors.white70,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+
+                  const SizedBox(height: 20),
+
+                  _buildChunkyButton(
+                    label: 'Play Again',
+                    icon: Icons.refresh_rounded,
+                    color: const Color(0xFF2EC4B6),
+                    onPressed: restartGame,
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  _buildChunkyButton(
+                    label: 'Main Menu',
+                    icon: Icons.home_rounded,
+                    color: Colors.white24,
+                    onPressed: goToMainMenu,
                   ),
                 ],
               ),
             ),
-            if (isPaused)
-              Positioned.fill(
-                child: PauseMenu(
-                  onResume: resumeGame,
-                  onRestart: restartGame,
-                  onOptions: () {},
-                  onMainMenu: () {
-                    Navigator.pop(context);
-                  },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF4A0E4E),
+              Color(0xFF811252),
+              Color(0xFF2E0854),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  _buildCustomAppBar(),
+                  Expanded(
+                    child: isGameOver
+                        ? _buildResultScreen()
+                        : _buildGameplay(),
+                  ),
+                ],
+              ),
+
+              // PAUSE MENU
+              if (isPaused)
+                Positioned.fill(
+                  child: PauseMenu(
+                    onResume: resumeGame,
+                    onRestart: restartGame,
+                    onOptions: () {},
+                    onMainMenu: goToMainMenu,
+                  ),
+                ),
+
+              // CONFETTI
+              Align(
+                alignment: Alignment.topCenter,
+                child: ConfettiWidget(
+                  confettiController: confettiController,
+                  blastDirectionality: BlastDirectionality.explosive,
+                  shouldLoop: false,
+                  colors: const [
+                    Colors.green,
+                    Colors.blue,
+                    Colors.pink,
+                    Colors.orange,
+                    Colors.purple,
+                    Colors.amber,
+                  ],
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
+
+// ============================================================
+// MAZE PAINTER
+// ============================================================
 
 class _MazePainter extends CustomPainter {
   final List<List<bool>> maze;
@@ -988,15 +1140,14 @@ class _MazePainter extends CustomPainter {
   final Point<int> goal;
   final List<Point<int>> tracedPath;
   final bool revealMaze;
-  final bool isPreview;
   final bool showTryAgain;
-  final Color backgroundColor;
   final Color wallColor;
   final Color corridorColor;
-  final Color cyanColor;
-  final Color greenColor;
-  final Color goldColor;
-  final Color redColor;
+  final Color hiddenColor;
+  final Color pathColor;
+  final Color mistakePathColor;
+  final Color startColor;
+  final Color finishColor;
 
   _MazePainter({
     required this.maze,
@@ -1005,20 +1156,19 @@ class _MazePainter extends CustomPainter {
     required this.goal,
     required this.tracedPath,
     required this.revealMaze,
-    required this.isPreview,
     required this.showTryAgain,
-    required this.backgroundColor,
     required this.wallColor,
     required this.corridorColor,
-    required this.cyanColor,
-    required this.greenColor,
-    required this.goldColor,
-    required this.redColor,
+    required this.hiddenColor,
+    required this.pathColor,
+    required this.mistakePathColor,
+    required this.startColor,
+    required this.finishColor,
   });
 
   @override
   void paint(Canvas canvas, Size canvasSize) {
-    if (size <= 0) return;
+    if (size <= 0 || maze.length != size) return;
 
     final cellSize = canvasSize.width / size;
     final paint = Paint()..style = PaintingStyle.fill;
@@ -1033,26 +1183,27 @@ class _MazePainter extends CustomPainter {
           cellSize,
         );
 
-        paint.color = revealMaze
-            ? (maze[y][x] ? corridorColor : wallColor)
-            : const Color(0xFF241A35);
+        paint
+          ..style = PaintingStyle.fill
+          ..color = revealMaze
+              ? (maze[y][x] ? corridorColor : wallColor)
+              : hiddenColor;
 
         canvas.drawRect(rect, paint);
 
         paint
-          ..color = Colors.white.withOpacity(0.035)
+          ..color = Colors.white.withValues(alpha: 0.05)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 0.6;
 
         canvas.drawRect(rect, paint);
-        paint.style = PaintingStyle.fill;
       }
     }
 
     // Draw the player's route.
     if (tracedPath.isNotEmpty) {
       final pathPaint = Paint()
-        ..color = showTryAgain ? redColor : cyanColor
+        ..color = showTryAgain ? mistakePathColor : pathColor
         ..strokeWidth = cellSize * 0.42
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
@@ -1077,15 +1228,15 @@ class _MazePainter extends CustomPainter {
       canvas.drawPath(path, pathPaint);
     }
 
-    _drawMarker(canvas, start, cellSize, greenColor, 'S');
-    _drawMarker(canvas, goal, cellSize, goldColor, 'F');
+    _drawMarker(canvas, start, cellSize, startColor, 'S');
+    _drawMarker(canvas, goal, cellSize, finishColor, 'F');
 
     if (showTryAgain) {
       final textPainter = TextPainter(
         text: TextSpan(
           text: 'TRY AGAIN!',
           style: TextStyle(
-            color: redColor,
+            color: mistakePathColor,
             fontSize: min(22.0, cellSize * 1.2),
             fontWeight: FontWeight.w900,
             shadows: const [
@@ -1119,15 +1270,24 @@ class _MazePainter extends CustomPainter {
       (point.y + 0.5) * cellSize,
     );
 
-    final paint = Paint()..color = color;
-    canvas.drawCircle(center, cellSize * 0.37, paint);
+    // White ring so the marker stands out on any cell color.
+    canvas.drawCircle(
+      center,
+      cellSize * 0.41,
+      Paint()..color = Colors.white,
+    );
+    canvas.drawCircle(
+      center,
+      cellSize * 0.34,
+      Paint()..color = color,
+    );
 
     final textPainter = TextPainter(
       text: TextSpan(
         text: label,
         style: TextStyle(
-          color: const Color(0xFF160E25),
-          fontSize: cellSize * 0.45,
+          color: const Color(0xFF2E0854),
+          fontSize: cellSize * 0.42,
           fontWeight: FontWeight.w900,
         ),
       ),
