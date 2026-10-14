@@ -143,7 +143,10 @@ class _WordQuestGameState extends State<WordQuestGame>
   // GAME STATE
   // ============================================================
 
-  static const int totalGameDuration = 60;
+  static const int totalGameDuration = 30; // starting time (seconds)
+  static const int maxHints = 3; // hints allowed per round
+  static const int correctBonusSeconds = 5; // time added for a correct answer
+  static const int wrongPenaltySeconds = 5; // time removed for a mistake
 
   Timer? _timer;
 
@@ -156,6 +159,7 @@ class _WordQuestGameState extends State<WordQuestGame>
   int _currentPuzzleIndex = 0;
   int _puzzleStartTime = 0;
   int _correctAnswers = 0;
+  int _hintsLeft = maxHints;
 
   bool _isPaused = false;
   bool _isFinished = false;
@@ -179,11 +183,13 @@ class _WordQuestGameState extends State<WordQuestGame>
   bool _answerWrong = false;
   bool _hintUsed = false;
 
+  // Index of the picture currently zoomed in (null = none).
+  int? _zoomedImage;
+
   late ConfettiController _confetti;
   final AudioPlayer _player = AudioPlayer();
 
   late AnimationController _shakeController;
-  late Animation<double> _shakeAnimation;
 
   WordPuzzle get _currentPuzzle => _puzzles[_currentPuzzleIndex];
 
@@ -201,10 +207,6 @@ class _WordQuestGameState extends State<WordQuestGame>
       duration: const Duration(milliseconds: 400),
       vsync: this,
     );
-
-    _shakeAnimation = Tween<double>(begin: 0.0, end: 10.0)
-        .chain(CurveTween(curve: Curves.elasticIn))
-        .animate(_shakeController);
 
     _resetPuzzlePool();
     _loadNextPuzzle();
@@ -263,7 +265,7 @@ class _WordQuestGameState extends State<WordQuestGame>
 
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-    while (_letterBank.length < puzzle.answer.length + 7) {
+    while (_letterBank.length < 12) {
       _letterBank.add(alphabet[_random.nextInt(alphabet.length)]);
     }
 
@@ -277,6 +279,7 @@ class _WordQuestGameState extends State<WordQuestGame>
     _answerCorrect = false;
     _answerWrong = false;
     _hintUsed = false;
+    _zoomedImage = null;
   }
 
   // ============================================================
@@ -383,8 +386,8 @@ class _WordQuestGameState extends State<WordQuestGame>
         _streak = nextStreak;
         _bestStreak = max(_bestStreak, _streak);
         _xp += earnedXp;
-        _timeLeft += 2;
-        _feedback = '+$earnedXp XP! Correct!';
+        _timeLeft += correctBonusSeconds;
+        _feedback = '+$earnedXp XP  •  +${correctBonusSeconds}s';
         _lastAnswerCorrect = true;
       });
 
@@ -402,7 +405,8 @@ class _WordQuestGameState extends State<WordQuestGame>
         _answerWrong = true;
         _answerCorrect = false;
         _streak = 0;
-        _feedback = 'Not quite! Try again.';
+        _timeLeft = max(0, _timeLeft - wrongPenaltySeconds);
+        _feedback = 'Not quite!  •  -${wrongPenaltySeconds}s';
         _lastAnswerCorrect = false;
       });
 
@@ -412,6 +416,12 @@ class _WordQuestGameState extends State<WordQuestGame>
       await Future<void>.delayed(const Duration(milliseconds: 650));
 
       if (!mounted || _isFinished) return;
+
+      // The penalty used up the remaining time.
+      if (_timeLeft <= 0) {
+        _endRoundNow();
+        return;
+      }
 
       setState(() {
         // Return incorrect letters to the bank, keeping hinted letters.
@@ -434,11 +444,37 @@ class _WordQuestGameState extends State<WordQuestGame>
   }
 
   // ============================================================
+  // END ROUND (time ran out from a penalty)
+  // ============================================================
+
+  void _endRoundNow() {
+    _timer?.cancel();
+
+    setState(() {
+      _timeLeft = 0;
+      _isFinished = true;
+      _isChecking = false;
+      _zoomedImage = null;
+    });
+
+    _finishGame();
+  }
+
+  // ============================================================
   // HINT
   // ============================================================
 
   void _useHint() {
     if (_isPaused || _isFinished || _isChecking) return;
+
+    // No hints left for this round.
+    if (_hintsLeft <= 0) {
+      setState(() {
+        _feedback = 'No hints left this round!';
+        _lastAnswerCorrect = false;
+      });
+      return;
+    }
 
     final emptySlots = <int>[];
 
@@ -472,7 +508,8 @@ class _WordQuestGameState extends State<WordQuestGame>
       _letterAvailable[bankIndex] = false;
       _hintLocked[slotIndex] = true;
       _hintUsed = true;
-      _feedback = 'Hint revealed!';
+      _hintsLeft--;
+      _feedback = 'Hint revealed!  ($_hintsLeft left)';
       _lastAnswerCorrect = true;
     });
 
@@ -494,6 +531,7 @@ class _WordQuestGameState extends State<WordQuestGame>
 
     setState(() {
       _isPaused = true;
+      _zoomedImage = null;
     });
   }
 
@@ -527,6 +565,8 @@ class _WordQuestGameState extends State<WordQuestGame>
       _answerCorrect = false;
       _answerWrong = false;
       _hintUsed = false;
+      _zoomedImage = null;
+      _hintsLeft = maxHints;
 
       _resetPuzzlePool();
       _loadNextPuzzle();
@@ -616,11 +656,12 @@ class _WordQuestGameState extends State<WordQuestGame>
     required IconData icon,
     required Color color,
     required VoidCallback onPressed,
+    double height = 50,
   }) {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
-        height: 50,
+        height: height,
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(16),
@@ -787,83 +828,98 @@ class _WordQuestGameState extends State<WordQuestGame>
   // ============================================================
 
   Widget _buildGameplay() {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
-      child: Column(
-        children: [
-          // HUD
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bottomInset = MediaQuery.of(context).padding.bottom;
+
+        // Height used by everything except the picture grid.
+        const fixedHeight = 450.0;
+
+        // The picture grid takes whatever space is left over,
+        // so the whole game fits on one screen.
+        final pictureHeight =
+            (constraints.maxHeight - fixedHeight - bottomInset)
+                .clamp(120.0, 250.0);
+
+        return SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(12, 0, 12, 10 + bottomInset),
+          child: Column(
             children: [
-              _buildHudCard(
-                icon: Icons.timer_outlined,
-                title: 'TIME',
-                value: '${_timeLeft}s',
-                valueColor:
-                    _timeLeft <= 10 ? Colors.redAccent : Colors.cyanAccent,
+              // HUD
+              Row(
+                children: [
+                  _buildHudCard(
+                    icon: Icons.timer_outlined,
+                    title: 'TIME',
+                    value: '${_timeLeft}s',
+                    valueColor:
+                        _timeLeft <= 10 ? Colors.redAccent : Colors.cyanAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildHudCard(
+                    icon: Icons.check_circle_outline,
+                    title: 'SOLVED',
+                    value: '$_wordsSolved',
+                    valueColor: Colors.greenAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildHudCard(
+                    icon: Icons.bolt_rounded,
+                    title: 'XP',
+                    value: '$_xp',
+                    valueColor: Colors.amber,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildHudCard(
+                    icon: Icons.local_fire_department,
+                    title: 'STREAK',
+                    value: '$_streak',
+                    valueColor: Colors.orangeAccent,
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              _buildHudCard(
-                icon: Icons.check_circle_outline,
-                title: 'SOLVED',
-                value: '$_wordsSolved',
-                valueColor: Colors.greenAccent,
+
+              const SizedBox(height: 8),
+
+              const Text(
+                'FOUR PICS, ONE WORD',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.cyanAccent,
+                  letterSpacing: 1.2,
+                ),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(width: 8),
-              _buildHudCard(
-                icon: Icons.bolt_rounded,
-                title: 'XP',
-                value: '$_xp',
-                valueColor: Colors.amber,
-              ),
-              const SizedBox(width: 8),
-              _buildHudCard(
-                icon: Icons.local_fire_department,
-                title: 'STREAK',
-                value: '$_streak',
-                valueColor: Colors.orangeAccent,
-              ),
+
+              const SizedBox(height: 8),
+
+              _buildPictureGrid(pictureHeight),
+
+              const SizedBox(height: 8),
+
+              _buildHintCard(),
+
+              const SizedBox(height: 10),
+
+              _buildAnswerBoxes(),
+
+              const SizedBox(height: 12),
+
+              _buildLetterBank(),
+
+              const SizedBox(height: 10),
+
+              _buildHintButton(),
+
+              const SizedBox(height: 6),
+
+              _buildFeedback(),
             ],
           ),
-
-          const SizedBox(height: 14),
-
-          const Text(
-            'FOUR PICS, ONE WORD',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: Colors.cyanAccent,
-              letterSpacing: 1.2,
-            ),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 10),
-
-          _buildPictureGrid(),
-
-          const SizedBox(height: 14),
-
-          _buildHintCard(),
-
-          const SizedBox(height: 16),
-
-          _buildAnswerBoxes(),
-
-          const SizedBox(height: 18),
-
-          _buildLetterBank(),
-
-          const SizedBox(height: 14),
-
-          _buildHintButton(),
-
-          const SizedBox(height: 12),
-
-          _buildFeedback(),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -871,9 +927,10 @@ class _WordQuestGameState extends State<WordQuestGame>
   // PICTURE GRID
   // ============================================================
 
-  Widget _buildPictureGrid() {
+  Widget _buildPictureGrid(double height) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      height: height,
+      padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(20),
@@ -886,82 +943,97 @@ class _WordQuestGameState extends State<WordQuestGame>
           ),
         ],
       ),
-      child: GridView.builder(
-        shrinkWrap: true,
-        padding: EdgeInsets.zero,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _displayImages.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 6,
-          mainAxisSpacing: 6,
-          childAspectRatio: 1.22,
-        ),
-        itemBuilder: (context, index) {
-          return Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.white24),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildPictureCell(0)),
+                const SizedBox(width: 6),
+                Expanded(child: _buildPictureCell(1)),
+              ],
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.asset(
-                    'assets/images/level9/${_displayImages[index]}',
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        color: Colors.white.withValues(alpha: 0.1),
-                        child: const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.image_not_supported_outlined,
-                              color: Colors.white70,
-                              size: 30,
-                            ),
-                            SizedBox(height: 6),
-                            Text(
-                              'Image not found',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${index + 1}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+          ),
+          const SizedBox(height: 6),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildPictureCell(2)),
+                const SizedBox(width: 6),
+                Expanded(child: _buildPictureCell(3)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPictureCell(int index) {
+    if (index >= _displayImages.length) return const SizedBox.shrink();
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (_isPaused || _isFinished) return;
+
+        setState(() {
+          _zoomedImage = index;
+        });
+      },
+      child: _buildPictureCellContent(index),
+    );
+  }
+
+  Widget _buildPictureCellContent(int index) {
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              'assets/images/level9/${_displayImages[index]}',
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  child: const Center(
+                    child: Icon(
+                      Icons.image_not_supported_outlined,
+                      color: Colors.white70,
+                      size: 26,
                     ),
                   ),
-                ],
+                );
+              },
+            ),
+            Positioned(
+              top: 5,
+              left: 5,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${index + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               ),
             ),
-          );
-        },
+          ],
+        ),
       ),
     );
   }
@@ -972,12 +1044,12 @@ class _WordQuestGameState extends State<WordQuestGame>
 
   Widget _buildHintCard() {
     return _glass(
-      radius: 16,
+      radius: 14,
       alpha: 0.1,
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          const Icon(Icons.lightbulb_rounded, color: Colors.amber, size: 24),
+          const Icon(Icons.lightbulb_rounded, color: Colors.amber, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -987,17 +1059,17 @@ class _WordQuestGameState extends State<WordQuestGame>
                   'NEED A CLUE?',
                   style: TextStyle(
                     color: Colors.amber,
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   _currentPuzzle.hint,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1021,15 +1093,15 @@ class _WordQuestGameState extends State<WordQuestGame>
           style: TextStyle(
             color: Colors.white60,
             fontWeight: FontWeight.w900,
-            fontSize: 13,
+            fontSize: 11,
             letterSpacing: 1.2,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         Wrap(
           alignment: WrapAlignment.center,
           spacing: 6,
-          runSpacing: 10,
+          runSpacing: 8,
           children: List.generate(_answerSlots.length, (index) {
             final bankIndex = _answerSlots[index];
 
@@ -1051,8 +1123,8 @@ class _WordQuestGameState extends State<WordQuestGame>
               onTap: () => _removeAnswerLetter(index),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
-                width: _answerSlots.length >= 7 ? 37 : 44,
-                height: 52,
+                width: _answerSlots.length >= 7 ? 36 : 42,
+                height: 46,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: boxColor,
@@ -1076,7 +1148,7 @@ class _WordQuestGameState extends State<WordQuestGame>
   }
 
   // ============================================================
-  // LETTER BANK
+  // LETTER BANK (always 12 tiles = 2 rows of 6)
   // ============================================================
 
   Widget _buildLetterBank() {
@@ -1087,11 +1159,11 @@ class _WordQuestGameState extends State<WordQuestGame>
           style: TextStyle(
             color: Colors.white60,
             fontWeight: FontWeight.w900,
-            fontSize: 13,
+            fontSize: 11,
             letterSpacing: 1.1,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         GridView.builder(
           shrinkWrap: true,
           padding: EdgeInsets.zero,
@@ -1101,7 +1173,7 @@ class _WordQuestGameState extends State<WordQuestGame>
             crossAxisCount: 6,
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
-            childAspectRatio: 1.15,
+            childAspectRatio: 1.3,
           ),
           itemBuilder: (context, index) {
             final available = _letterAvailable[index];
@@ -1129,7 +1201,7 @@ class _WordQuestGameState extends State<WordQuestGame>
                     _letterBank[index],
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 20,
+                      fontSize: 19,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -1147,14 +1219,16 @@ class _WordQuestGameState extends State<WordQuestGame>
   // ============================================================
 
   Widget _buildHintButton() {
-    final disabled = _isChecking || _isPaused || _isFinished;
+    final noHints = _hintsLeft <= 0;
+    final disabled = _isChecking || _isPaused || _isFinished || noHints;
 
     return Opacity(
       opacity: disabled ? 0.5 : 1.0,
       child: _buildChunkyButton(
-        label: 'USE HINT',
+        label: noHints ? 'NO HINTS LEFT' : 'USE HINT  ($_hintsLeft/$maxHints)',
         icon: Icons.lightbulb_rounded,
-        color: const Color(0xFFFF9F1C),
+        color: noHints ? Colors.white24 : const Color(0xFFFF9F1C),
+        height: 44,
         onPressed: () {
           if (!disabled) _useHint();
         },
@@ -1163,34 +1237,34 @@ class _WordQuestGameState extends State<WordQuestGame>
   }
 
   // ============================================================
-  // FEEDBACK
+  // FEEDBACK (fixed height so the layout never jumps)
   // ============================================================
 
   Widget _buildFeedback() {
-    if (_feedback.isEmpty) {
-      return const SizedBox(height: 24);
-    }
-
     final color = _lastAnswerCorrect ? Colors.greenAccent : Colors.redAccent;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      width: double.infinity,
-      padding: const EdgeInsets.all(11),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.6)),
-      ),
-      child: Text(
-        _feedback,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
-          fontSize: 13,
-        ),
-      ),
+    return SizedBox(
+      height: 36,
+      child: _feedback.isEmpty
+          ? null
+          : Container(
+              width: double.infinity,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: color.withValues(alpha: 0.6)),
+              ),
+              child: Text(
+                _feedback,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+            ),
     );
   }
 
@@ -1373,12 +1447,102 @@ class _WordQuestGameState extends State<WordQuestGame>
   }
 
   // ============================================================
+  // ZOOM OVERLAY
+  // ============================================================
+
+  Widget _buildZoomOverlay() {
+    final imageName = _displayImages[_zoomedImage!];
+
+    return Positioned.fill(
+      child: GestureDetector(
+        // Tapping anywhere closes the zoomed picture.
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            _zoomedImage = null;
+          });
+        },
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.88),
+          padding: const EdgeInsets.all(20),
+          child: SafeArea(
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey(_zoomedImage),
+              tween: Tween<double>(begin: 0.8, end: 1.0),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutBack,
+              builder: (context, value, child) {
+                return Opacity(
+                  opacity: value.clamp(0.0, 1.0).toDouble(),
+                  child: Transform.scale(scale: value, child: child),
+                );
+              },
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: Colors.white38, width: 2),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black54,
+                            blurRadius: 20,
+                            offset: Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Image.asset(
+                          'assets/images/level9/$imageName',
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 200,
+                              alignment: Alignment.center,
+                              color: Colors.white.withValues(alpha: 0.1),
+                              child: const Icon(
+                                Icons.image_not_supported_outlined,
+                                color: Colors.white70,
+                                size: 48,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Tap anywhere to close',
+                    style: TextStyle(
+                      color: Colors.white60,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
   // BUILD
   // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.0),
+      ),
+      child: Scaffold(
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -1398,10 +1562,14 @@ class _WordQuestGameState extends State<WordQuestGame>
                 _buildCustomAppBar(),
                 Expanded(
                   child: AnimatedBuilder(
-                    animation: _shakeAnimation,
+                    animation: _shakeController,
                     builder: (context, child) {
+                      // Wobble left/right and settle back to exactly 0.
+                      final t = _shakeController.value;
+                      final dx = sin(t * pi * 6) * 8 * (1 - t);
+
                       return Transform.translate(
-                        offset: Offset(_shakeAnimation.value, 0),
+                        offset: Offset(dx, 0),
                         child: child,
                       );
                     },
@@ -1411,6 +1579,13 @@ class _WordQuestGameState extends State<WordQuestGame>
                 ),
               ],
             ),
+
+            // Zoomed picture
+            if (_zoomedImage != null &&
+                !_isFinished &&
+                !_isPaused &&
+                _zoomedImage! < _displayImages.length)
+              _buildZoomOverlay(),
 
             // Pause menu
             if (_isPaused && !_isFinished)
@@ -1442,6 +1617,7 @@ class _WordQuestGameState extends State<WordQuestGame>
             ),
           ],
         ),
+      ),
       ),
     );
   }
