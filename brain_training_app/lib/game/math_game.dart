@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
@@ -22,13 +24,14 @@ class _MathGameState extends State<MathGame> {
   Timer? questionTimer;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _musicPlayer = AudioPlayer();
 
   int num1 = 0;
   int num2 = 0;
   int correctAnswer = 0;
 
-  String operator = "+";
-  String question = "";
+  String operator = '+';
+  String question = '';
 
   int correctCount = 0;
   int wrongCount = 0;
@@ -39,27 +42,31 @@ class _MathGameState extends State<MathGame> {
   int questionTime = 10;
 
   bool gameOver = false;
-
-  // PAUSE SYSTEM
   bool isPaused = false;
+  bool showOptions = false;
+
+  // Both audio settings start at 50%.
+  double musicVolume = 0.5;
+  double soundVolume = 0.5;
+
+  // Tracks whether the music has been stopped because volume was 0%.
+  bool _musicStoppedForMute = false;
 
   int xp = 0;
   int streak = 0;
   int bestStreak = 0;
 
   bool showFeedback = false;
-  String feedbackText = "";
+  String feedbackText = '';
   bool lastAnswerCorrect = false;
 
   bool showError = false;
   double shakeOffset = 0;
-
   double screenShake = 0;
 
   bool showXpPopup = false;
   int xpGained = 0;
 
-  // Used to safely cancel delayed question transitions.
   int _gameSession = 0;
 
   @override
@@ -70,27 +77,154 @@ class _MathGameState extends State<MathGame> {
       duration: const Duration(seconds: 2),
     );
 
+    _startBackgroundMusic();
     generateQuestion();
   }
 
   // ============================================================
-  // SOUND
+  // AUDIO
   // ============================================================
 
-  void _playSound(String fileName) {
-    _audioPlayer.stop();
-    _audioPlayer.play(
-      AssetSource('sounds/$fileName'),
-    );
+  Future<void> _startBackgroundMusic() async {
+    if (musicVolume <= 0.0) {
+      _musicStoppedForMute = true;
 
-    debugPrint('Playing: $fileName');
+      try {
+        await _musicPlayer.stop();
+      } catch (error) {
+        debugPrint('Could not stop muted music: $error');
+      }
+
+      return;
+    }
+
+    try {
+      await _musicPlayer.stop();
+      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
+      await _musicPlayer.setVolume(musicVolume);
+
+      await _musicPlayer.play(
+        AssetSource('sounds/Unfolding_Patterns.mp3'),
+        volume: musicVolume,
+      );
+
+      _musicStoppedForMute = false;
+
+      debugPrint(
+        'Background music started at '
+        '${(musicVolume * 100).round()}%',
+      );
+    } catch (error) {
+      debugPrint('Could not play background music: $error');
+    }
   }
 
-  void playCorrectSound() => _playSound('correct.mp3');
+  Future<void> _playSound(String fileName) async {
+    if (soundVolume <= 0.0) {
+      return;
+    }
 
-  void playWrongSound() => _playSound('wrong.mp3');
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setVolume(soundVolume);
 
-  void playCompleteSound() => _playSound('level up.mp3');
+      await _audioPlayer.play(
+        AssetSource('sounds/$fileName'),
+        volume: soundVolume,
+      );
+
+      debugPrint(
+        'Playing sound: $fileName at '
+        '${(soundVolume * 100).round()}%',
+      );
+    } catch (error) {
+      debugPrint('Could not play sound $fileName: $error');
+    }
+  }
+
+  void playCorrectSound() {
+    _playSound('correct.mp3');
+  }
+
+  void playWrongSound() {
+    _playSound('wrong.mp3');
+  }
+
+  void playCompleteSound() {
+    _playSound('level up.mp3');
+  }
+
+  Future<void> changeMusicVolume(double value) async {
+    final double volume = value.clamp(0.0, 1.0).toDouble();
+
+    if (!mounted) return;
+
+    setState(() {
+      musicVolume = volume;
+    });
+
+    try {
+      if (volume <= 0.0) {
+        _musicStoppedForMute = true;
+        await _musicPlayer.stop();
+
+        debugPrint('Background music muted: 0%');
+        return;
+      }
+
+      if (_musicStoppedForMute) {
+        // Do not play music behind the pause/options screens.
+        if (isPaused || gameOver) {
+          debugPrint(
+            'Music set to ${(volume * 100).round()}%; '
+            'it will start when gameplay resumes.',
+          );
+          return;
+        }
+
+        await _startBackgroundMusic();
+        return;
+      }
+
+      await _musicPlayer.setVolume(volume);
+
+      debugPrint(
+        'Background music volume set to '
+        '${(volume * 100).round()}%',
+      );
+    } catch (error) {
+      debugPrint('Could not change music volume: $error');
+    }
+  }
+
+  Future<void> changeSoundVolume(double value) async {
+    final double volume = value.clamp(0.0, 1.0).toDouble();
+
+    if (!mounted) return;
+
+    setState(() {
+      soundVolume = volume;
+    });
+
+    try {
+      await _audioPlayer.setVolume(volume);
+
+      debugPrint(
+        'Sound effects volume set to '
+        '${(volume * 100).round()}%',
+      );
+    } catch (error) {
+      debugPrint('Could not change sound volume: $error');
+    }
+  }
+
+  void showGameOptions() {
+    if (!mounted) return;
+
+    setState(() {
+      showOptions = true;
+    });
+  }
 
   // ============================================================
   // PAUSE SYSTEM
@@ -103,20 +237,51 @@ class _MathGameState extends State<MathGame> {
 
     setState(() {
       isPaused = true;
+      showOptions = false;
     });
 
     FocusScope.of(context).unfocus();
+
     _audioPlayer.pause();
+    _musicPlayer.pause();
   }
 
-  void resumeGame() {
+  Future<void> resumeGame() async {
     if (!isPaused || gameOver) return;
 
     setState(() {
       isPaused = false;
+      showOptions = false;
     });
 
-    _audioPlayer.resume();
+    try {
+      if (musicVolume <= 0.0) {
+        await _musicPlayer.stop();
+        _musicStoppedForMute = true;
+      } else if (_musicStoppedForMute) {
+        await _startBackgroundMusic();
+      } else {
+        await _musicPlayer.setVolume(musicVolume);
+        await _musicPlayer.resume();
+      }
+    } catch (error) {
+      debugPrint('Could not resume background music: $error');
+    }
+
+    if (!mounted) return;
+
+    try {
+      if (soundVolume > 0.0) {
+        await _audioPlayer.setVolume(soundVolume);
+      } else {
+        await _audioPlayer.setVolume(0.0);
+      }
+    } catch (error) {
+      debugPrint('Could not restore sound volume: $error');
+    }
+
+    if (!mounted) return;
+
     startQuestionTimer(resetTime: false);
   }
 
@@ -139,7 +304,7 @@ class _MathGameState extends State<MathGame> {
           return;
         }
 
-        if (isPaused) return;
+        if (isPaused || gameOver) return;
 
         if (questionTime <= 0) {
           timer.cancel();
@@ -177,8 +342,7 @@ class _MathGameState extends State<MathGame> {
     Future.delayed(
       const Duration(milliseconds: 700),
       () {
-        if (!mounted) return;
-        if (isPaused) return;
+        if (!mounted || isPaused) return;
         if (currentSession != _gameSession) return;
 
         setState(() {
@@ -191,6 +355,7 @@ class _MathGameState extends State<MathGame> {
             gameOver = true;
           });
 
+          _musicPlayer.stop();
           playCompleteSound();
           confettiController.play();
           saveScore();
@@ -215,49 +380,37 @@ class _MathGameState extends State<MathGame> {
       shakeOffset = 10;
     });
 
-    Future.delayed(
-      const Duration(milliseconds: 100),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          shakeOffset = -10;
-        });
-      },
-    );
+      setState(() {
+        shakeOffset = -10;
+      });
+    });
 
-    Future.delayed(
-      const Duration(milliseconds: 200),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          shakeOffset = 10;
-        });
-      },
-    );
+      setState(() {
+        shakeOffset = 10;
+      });
+    });
 
-    Future.delayed(
-      const Duration(milliseconds: 300),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          shakeOffset = 0;
-        });
-      },
-    );
+      setState(() {
+        shakeOffset = 0;
+      });
+    });
 
-    Future.delayed(
-      const Duration(seconds: 2),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          showError = false;
-        });
-      },
-    );
+      setState(() {
+        showError = false;
+      });
+    });
   }
 
   // ============================================================
@@ -271,38 +424,29 @@ class _MathGameState extends State<MathGame> {
       screenShake = 10;
     });
 
-    Future.delayed(
-      const Duration(milliseconds: 100),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          screenShake = -10;
-        });
-      },
-    );
+      setState(() {
+        screenShake = -10;
+      });
+    });
 
-    Future.delayed(
-      const Duration(milliseconds: 200),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          screenShake = 10;
-        });
-      },
-    );
+      setState(() {
+        screenShake = 10;
+      });
+    });
 
-    Future.delayed(
-      const Duration(milliseconds: 300),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          screenShake = 0;
-        });
-      },
-    );
+      setState(() {
+        screenShake = 0;
+      });
+    });
   }
 
   // ============================================================
@@ -317,16 +461,13 @@ class _MathGameState extends State<MathGame> {
       xpGained = amount;
     });
 
-    Future.delayed(
-      const Duration(milliseconds: 600),
-      () {
-        if (!mounted || isPaused) return;
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (!mounted || isPaused) return;
 
-        setState(() {
-          showXpPopup = false;
-        });
-      },
-    );
+      setState(() {
+        showXpPopup = false;
+      });
+    });
   }
 
   // ============================================================
@@ -342,13 +483,13 @@ class _MathGameState extends State<MathGame> {
     num2 = random.nextInt(20) + 1;
 
     if (random.nextBool()) {
-      operator = "+";
+      operator = '+';
       correctAnswer = num1 + num2;
     } else {
-      operator = "-";
+      operator = '-';
 
       if (num2 > num1) {
-        int temp = num1;
+        final int temp = num1;
         num1 = num2;
         num2 = temp;
       }
@@ -357,7 +498,7 @@ class _MathGameState extends State<MathGame> {
     }
 
     setState(() {
-      question = "$num1 $operator $num2 = ?";
+      question = '$num1 $operator $num2 = ?';
     });
 
     startQuestionTimer();
@@ -377,7 +518,8 @@ class _MathGameState extends State<MathGame> {
 
     questionTimer?.cancel();
 
-    int userAnswer = int.tryParse(answerController.text) ?? -999;
+    final int userAnswer =
+        int.tryParse(answerController.text.trim()) ?? -999;
 
     bool isCorrect = userAnswer == correctAnswer;
 
@@ -385,9 +527,9 @@ class _MathGameState extends State<MathGame> {
       isCorrect = false;
       feedbackText = "Time's up! ❌ Correct: $correctAnswer";
     } else if (isCorrect) {
-      feedbackText = "CORRECT! 🎉";
+      feedbackText = 'CORRECT! 🎉';
     } else {
-      feedbackText = "WRONG! ❌ Correct: $correctAnswer";
+      feedbackText = 'WRONG! ❌ Correct: $correctAnswer';
     }
 
     if (isCorrect) {
@@ -428,10 +570,7 @@ class _MathGameState extends State<MathGame> {
     Future.delayed(
       const Duration(milliseconds: 700),
       () {
-        if (!mounted) return;
-
-        if (isPaused) return;
-
+        if (!mounted || isPaused) return;
         if (currentSession != _gameSession) return;
 
         setState(() {
@@ -444,6 +583,7 @@ class _MathGameState extends State<MathGame> {
             gameOver = true;
           });
 
+          _musicPlayer.stop();
           playCompleteSound();
           confettiController.play();
           saveScore();
@@ -467,30 +607,34 @@ class _MathGameState extends State<MathGame> {
   }
 
   String getGrade() {
-    double percent = accuracy;
+    final double percent = accuracy;
 
-    if (percent >= 90) return "S";
-    if (percent >= 80) return "A";
-    if (percent >= 70) return "B";
-    if (percent >= 60) return "C";
+    if (percent >= 90) return 'S';
+    if (percent >= 80) return 'A';
+    if (percent >= 70) return 'B';
+    if (percent >= 60) return 'C';
 
-    return "D";
+    return 'D';
   }
 
   // ============================================================
   // FIRESTORE
   // ============================================================
 
-  void saveScore() async {
-    await FirebaseFirestore.instance.collection('scores').add({
-      'correct': correctCount,
-      'wrong': wrongCount,
-      'accuracy': accuracy,
-      'xp': xp,
-      'streak': bestStreak,
-      'grade': getGrade(),
-      'timestamp': DateTime.now(),
-    });
+  Future<void> saveScore() async {
+    try {
+      await FirebaseFirestore.instance.collection('scores').add({
+        'correct': correctCount,
+        'wrong': wrongCount,
+        'accuracy': accuracy,
+        'xp': xp,
+        'streak': bestStreak,
+        'grade': getGrade(),
+        'timestamp': DateTime.now(),
+      });
+    } catch (error) {
+      debugPrint('Could not save score: $error');
+    }
   }
 
   // ============================================================
@@ -506,25 +650,24 @@ class _MathGameState extends State<MathGame> {
       num2 = 0;
       correctAnswer = 0;
 
-      operator = "+";
-      question = "";
+      operator = '+';
+      question = '';
 
       correctCount = 0;
       wrongCount = 0;
-
       questionCount = 0;
-
       questionTime = 10;
 
       gameOver = false;
       isPaused = false;
+      showOptions = false;
 
       xp = 0;
       streak = 0;
       bestStreak = 0;
 
       showFeedback = false;
-      feedbackText = "";
+      feedbackText = '';
       lastAnswerCorrect = false;
 
       showError = false;
@@ -538,7 +681,16 @@ class _MathGameState extends State<MathGame> {
       answerController.clear();
     });
 
+    _startBackgroundMusic();
     generateQuestion();
+  }
+
+  // ============================================================
+  // NAVIGATION
+  // ============================================================
+
+  void goToMainMenu() {
+    Navigator.pop(context);
   }
 
   @override
@@ -547,7 +699,10 @@ class _MathGameState extends State<MathGame> {
 
     confettiController.dispose();
     questionTimer?.cancel();
+
     _audioPlayer.dispose();
+    _musicPlayer.dispose();
+
     focusNode.dispose();
     answerController.dispose();
 
@@ -578,18 +733,13 @@ class _MathGameState extends State<MathGame> {
         child: SafeArea(
           child: Stack(
             children: [
-              // ====================================================
-              // MAIN GAME BODY
-              // ====================================================
               Transform.translate(
                 offset: Offset(screenShake, 0),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
-                      // CUSTOM TOP APP BAR
                       _buildTopHeader(context),
-
                       Expanded(
                         child: gameOver
                             ? _buildLevelCompleteScreen()
@@ -600,9 +750,6 @@ class _MathGameState extends State<MathGame> {
                 ),
               ),
 
-              // ====================================================
-              // XP POPUP
-              // ====================================================
               if (showXpPopup)
                 Positioned(
                   top: 180,
@@ -614,7 +761,9 @@ class _MathGameState extends State<MathGame> {
                     child: Center(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 10),
+                          horizontal: 20,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFFD700),
                           borderRadius: BorderRadius.circular(20),
@@ -628,7 +777,7 @@ class _MathGameState extends State<MathGame> {
                           ],
                         ),
                         child: Text(
-                          "+$xpGained XP",
+                          '+$xpGained XP',
                           style: const TextStyle(
                             fontSize: 26,
                             fontWeight: FontWeight.w900,
@@ -640,9 +789,6 @@ class _MathGameState extends State<MathGame> {
                   ),
                 ),
 
-              // ====================================================
-              // CONFETTI
-              // ====================================================
               Align(
                 alignment: Alignment.topCenter,
                 child: ConfettiWidget(
@@ -659,19 +805,16 @@ class _MathGameState extends State<MathGame> {
                 ),
               ),
 
-              // ====================================================
-              // PAUSE MENU OVERLAY
-              // ====================================================
               if (isPaused)
                 Positioned.fill(
-                  child: PauseMenu(
-                    onResume: resumeGame,
-                    onRestart: restartGame,
-                    onOptions: () {},
-                    onMainMenu: () {
-                      Navigator.pop(context);
-                    },
-                  ),
+                  child: showOptions
+                      ? _buildOptionsScreen()
+                      : PauseMenu(
+                          onResume: resumeGame,
+                          onRestart: restartGame,
+                          onOptions: showGameOptions,
+                          onMainMenu: goToMainMenu,
+                        ),
                 ),
             ],
           ),
@@ -680,7 +823,195 @@ class _MathGameState extends State<MathGame> {
     );
   }
 
-  // HEADER BAR WITH BACK & PAUSE BUTTONS
+  // ============================================================
+  // OPTIONS SCREEN
+  // ============================================================
+
+  Widget _buildOptionsScreen() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF4A0E4E),
+              Color(0xFF811252),
+              Color(0xFF2E0854),
+            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(22),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3B0B46).withOpacity(0.96),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: const Color(0xFFFFD700),
+                      width: 3,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black45,
+                        blurRadius: 18,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '⚙️ OPTIONS',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFFFD700),
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Adjust your game audio',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+
+                      _buildOptionsVolumeSlider(
+                        title: '🎵 Background Music',
+                        value: musicVolume,
+                        onChanged: changeMusicVolume,
+                      ),
+
+                      const SizedBox(height: 22),
+
+                      _buildOptionsVolumeSlider(
+                        title: '🔊 Sound Effects',
+                        value: soundVolume,
+                        onChanged: changeSoundVolume,
+                      ),
+
+                      const SizedBox(height: 30),
+
+                      _buildOptionsButton(
+                        text: '← BACK TO PAUSE MENU',
+                        color: const Color(0xFFFFD700),
+                        shadowColor: const Color(0xFFB8860B),
+                        textColor: const Color(0xFF3B0B46),
+                        onPressed: () {
+                          setState(() {
+                            showOptions = false;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionsVolumeSlider({
+    required String title,
+    required double value,
+    required ValueChanged<double> onChanged,
+  }) {
+    final int percentage = (value * 100).round();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFFFD700).withOpacity(0.65),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Text(
+                '$percentage%',
+                style: const TextStyle(
+                  color: Color(0xFFFFD700),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 17,
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: const Color(0xFFFFD700),
+              inactiveTrackColor: Colors.white24,
+              thumbColor: Colors.white,
+              overlayColor: const Color(0xFFFFD700).withOpacity(0.18),
+              trackHeight: 6,
+            ),
+            child: Slider(
+              value: value.clamp(0.0, 1.0),
+              min: 0.0,
+              max: 1.0,
+              divisions: 100,
+              label: '$percentage%',
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOptionsButton({
+    required String text,
+    required Color color,
+    required Color shadowColor,
+    required Color textColor,
+    required VoidCallback onPressed,
+  }) {
+    return _3DButton(
+      text: text,
+      color: color,
+      shadowColor: shadowColor,
+      textColor: textColor,
+      onPressed: onPressed,
+    );
+  }
+
+  // ============================================================
+  // HEADER
+  // ============================================================
+
   Widget _buildTopHeader(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -689,9 +1020,11 @@ class _MathGameState extends State<MathGame> {
         children: [
           const SizedBox(width: 48),
 
-          // TITLE BADGE
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 18,
+              vertical: 6,
+            ),
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.3),
               borderRadius: BorderRadius.circular(20),
@@ -701,7 +1034,7 @@ class _MathGameState extends State<MathGame> {
               ),
             ),
             child: const Text(
-              "LEVEL 1: MATH",
+              'LEVEL 1: MATH',
               style: TextStyle(
                 color: Color(0xFFFFD700),
                 fontWeight: FontWeight.w900,
@@ -711,8 +1044,6 @@ class _MathGameState extends State<MathGame> {
             ),
           ),
 
-          // PAUSE BUTTON
-                    // PAUSE BUTTON
           if (!gameOver && !isPaused)
             IconButton(
               onPressed: pauseGame,
@@ -732,13 +1063,16 @@ class _MathGameState extends State<MathGame> {
   // ============================================================
   // GAMEPLAY SCREEN
   // ============================================================
+
   Widget _buildGameplayScreen() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // STATS HUD ROW
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.35),
             borderRadius: BorderRadius.circular(20),
@@ -747,18 +1081,17 @@ class _MathGameState extends State<MathGame> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildHudItem("⭐ XP", "$xp", Colors.amber),
-              _buildHudItem("🔥 Streak", "$streak", Colors.orangeAccent),
-              _buildHudItem("🏆 Best", "$bestStreak", Colors.cyanAccent),
+              _buildHudItem('⭐ XP', '$xp', Colors.amber),
+              _buildHudItem('🔥 Streak', '$streak', Colors.orangeAccent),
+              _buildHudItem('🏆 Best', '$bestStreak', Colors.cyanAccent),
             ],
           ),
         ),
 
-        // QUESTION COUNTER & TIMER CARD
         Column(
           children: [
             Text(
-              "QUESTION ${questionCount + 1} OF $maxQuestions",
+              'QUESTION ${questionCount + 1} OF $maxQuestions',
               style: const TextStyle(
                 color: Colors.white70,
                 fontWeight: FontWeight.w800,
@@ -768,16 +1101,20 @@ class _MathGameState extends State<MathGame> {
             ),
             const SizedBox(height: 10),
 
-            // TIMER BAR
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 6,
+              ),
               decoration: BoxDecoration(
                 color: questionTime <= 3
                     ? Colors.redAccent.withOpacity(0.3)
                     : Colors.white.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(30),
                 border: Border.all(
-                  color: questionTime <= 3 ? Colors.redAccent : Colors.white30,
+                  color: questionTime <= 3
+                      ? Colors.redAccent
+                      : Colors.white30,
                 ),
               ),
               child: Row(
@@ -792,7 +1129,7 @@ class _MathGameState extends State<MathGame> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    "$questionTime SEC",
+                    '$questionTime SEC',
                     style: TextStyle(
                       color: questionTime <= 3
                           ? Colors.redAccent
@@ -807,7 +1144,6 @@ class _MathGameState extends State<MathGame> {
           ],
         ),
 
-        // MAIN QUESTION DISPLAY CARD
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 28),
@@ -846,7 +1182,6 @@ class _MathGameState extends State<MathGame> {
           ),
         ),
 
-        // INPUT FIELD & SUBMIT BUTTON
         Column(
           children: [
             Transform.translate(
@@ -874,7 +1209,7 @@ class _MathGameState extends State<MathGame> {
                   controller: answerController,
                   focusNode: focusNode,
                   keyboardType: TextInputType.number,
-                  enabled: !isPaused,
+                  enabled: !isPaused && !gameOver,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 32,
@@ -884,22 +1219,22 @@ class _MathGameState extends State<MathGame> {
                   decoration: const InputDecoration(
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.symmetric(vertical: 10),
-                    hintText: "?",
+                    hintText: '?',
                     hintStyle: TextStyle(
                       color: Colors.black26,
                       fontSize: 32,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
+                  onSubmitted: (_) => checkAnswer(),
                 ),
               ),
             ),
 
             const SizedBox(height: 20),
 
-            // 3D SUBMIT BUTTON
             _3DButton(
-              text: "SUBMIT",
+              text: 'SUBMIT',
               color: const Color(0xFF38EF7D),
               shadowColor: const Color(0xFF0C6B63),
               textColor: const Color(0xFF003816),
@@ -908,19 +1243,23 @@ class _MathGameState extends State<MathGame> {
           ],
         ),
 
-        // FEEDBACK MESSAGE
         AnimatedOpacity(
           opacity: showFeedback ? 1 : 0,
           duration: const Duration(milliseconds: 200),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 8,
+            ),
             decoration: BoxDecoration(
               color: lastAnswerCorrect
                   ? Colors.green.withOpacity(0.3)
                   : Colors.redAccent.withOpacity(0.3),
               borderRadius: BorderRadius.circular(15),
               border: Border.all(
-                color: lastAnswerCorrect ? Colors.green : Colors.redAccent,
+                color: lastAnswerCorrect
+                    ? Colors.green
+                    : Colors.redAccent,
               ),
             ),
             child: Text(
@@ -928,7 +1267,9 @@ class _MathGameState extends State<MathGame> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
-                color: lastAnswerCorrect ? Colors.greenAccent : Colors.redAccent,
+                color: lastAnswerCorrect
+                    ? Colors.greenAccent
+                    : Colors.redAccent,
               ),
             ),
           ),
@@ -940,87 +1281,208 @@ class _MathGameState extends State<MathGame> {
   // ============================================================
   // LEVEL COMPLETE SCREEN
   // ============================================================
-  Widget _buildLevelCompleteScreen() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Text(
-          "🎉 LEVEL COMPLETE!",
-          style: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.w900,
-            color: Color(0xFFFFD700),
-            letterSpacing: 1.2,
-          ),
-        ),
-        const SizedBox(height: 25),
 
-        // GRADE BADGE
-        Container(
-          width: 110,
-          height: 110,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white,
-            border: Border.all(color: const Color(0xFFFFD700), width: 4),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black45,
-                blurRadius: 15,
-                offset: Offset(0, 6),
+  Widget _buildLevelCompleteScreen() {
+    final bool passed = accuracy >= 60;
+
+    return Center(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 12,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 20,
               ),
-            ],
-          ),
-          child: Center(
-            child: Text(
-              getGrade(),
-              style: const TextStyle(
-                fontSize: 54,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF811252),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    passed
+                        ? '🎉 LEVEL COMPLETE!'
+                        : '😅 KEEP PRACTICING!',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: passed ? Colors.amber : Colors.redAccent,
+                      letterSpacing: 1,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+
+                  Text(
+                    passed
+                        ? 'Great job! You solved the math questions.'
+                        : 'Not quite enough correct answers. Try again!',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.amber),
+                    ),
+                    child: Text(
+                      'GRADE: ${getGrade()}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.amber,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildStatBadge('⭐ XP', '+$xp'),
+                      _buildStatBadge('🔥 Streak', '$bestStreak'),
+                      _buildStatBadge(
+                        '✅ Correct',
+                        '$correctCount/$maxQuestions',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  Text(
+                    '🎯 Accuracy: ${accuracy.toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  _buildChunkyButton(
+                    label: 'Try Again',
+                    icon: Icons.refresh_rounded,
+                    color: const Color(0xFF2EC4B6),
+                    onPressed: restartGame,
+                  ),
+                  const SizedBox(height: 10),
+
+                  _buildChunkyButton(
+                    label: 'Main Menu',
+                    icon: Icons.home_rounded,
+                    color: Colors.white24,
+                    onPressed: goToMainMenu,
+                  ),
+                ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
 
-        const SizedBox(height: 25),
+  // ============================================================
+  // STAT BADGE
+  // ============================================================
 
-        // STATS CARD
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white24),
-          ),
-          child: Column(
-            children: [
-              _buildStatRow("XP Earned:", "+$xp"),
-              const Divider(color: Colors.white12),
-              _buildStatRow("Best Streak:", "$bestStreak 🔥"),
-              const Divider(color: Colors.white12),
-              _buildStatRow("Correct Answers:", "$correctCount / $maxQuestions"),
-              const Divider(color: Colors.white12),
-              _buildStatRow("Accuracy:", "${accuracy.toStringAsFixed(0)}%"),
-            ],
+  Widget _buildStatBadge(String title, String value) {
+    return Column(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 13,
           ),
         ),
-
-        const SizedBox(height: 35),
-
-        // RESTART BUTTON
-        _3DButton(
-          text: "PLAY AGAIN",
-          color: const Color(0xFFFF8008),
-          shadowColor: const Color(0xFF993D00),
-          textColor: Colors.white,
-          onPressed: restartGame,
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildHudItem(String label, String value, Color valueColor) {
+  // ============================================================
+  // CHUNKY BUTTON
+  // ============================================================
+
+  Widget _buildChunkyButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        height: 50,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.4),
+              offset: const Offset(0, 4),
+              blurRadius: 8,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // HUD ITEM
+  // ============================================================
+
+  Widget _buildHudItem(
+    String label,
+    String value,
+    Color valueColor,
+  ) {
     return Column(
       children: [
         Text(
@@ -1043,36 +1505,12 @@ class _MathGameState extends State<MathGame> {
       ],
     );
   }
-
-  Widget _buildStatRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
+// ============================================================
 // REUSABLE CHUNKY 3D GAME BUTTON
+// ============================================================
+
 class _3DButton extends StatefulWidget {
   final String text;
   final Color color;
@@ -1098,21 +1536,39 @@ class _3DButtonState extends State<_3DButton> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) {
+        setState(() {
+          _isPressed = true;
+        });
+      },
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        setState(() {
+          _isPressed = false;
+        });
+
         widget.onPressed();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () {
+        setState(() {
+          _isPressed = false;
+        });
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         width: 200,
         height: 54,
-        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
+        transform: Matrix4.translationValues(
+          0,
+          _isPressed ? 4 : 0,
+          0,
+        ),
         decoration: BoxDecoration(
           color: widget.color,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white.withOpacity(0.8), width: 2),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.8),
+            width: 2,
+          ),
           boxShadow: [
             BoxShadow(
               color: widget.shadowColor,

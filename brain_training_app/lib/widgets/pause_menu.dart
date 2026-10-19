@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 class PauseMenu extends StatelessWidget {
@@ -6,37 +7,51 @@ class PauseMenu extends StatelessWidget {
   final VoidCallback onOptions;
   final VoidCallback onMainMenu;
 
+  // Keep these parameters for compatibility with existing game screens.
+  final bool isMusicEnabled;
+  final VoidCallback? onToggleMusic;
+  final double musicVolume;
+  final ValueChanged<double> onMusicVolumeChanged;
+  final double soundVolume;
+  final ValueChanged<double> onSoundVolumeChanged;
+
   const PauseMenu({
     super.key,
     required this.onResume,
     required this.onRestart,
     required this.onOptions,
     required this.onMainMenu,
+    this.isMusicEnabled = true,
+    this.onToggleMusic,
+    this.musicVolume = 0.25,
+    this.onMusicVolumeChanged = _defaultVolumeChanged,
+    this.soundVolume = 1.0,
+    this.onSoundVolumeChanged = _defaultVolumeChanged,
   });
+
+  static void _defaultVolumeChanged(double value) {}
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.black.withValues(alpha: 0.78),
-      child: GestureDetector(
-        // Blocks taps from reaching the game underneath.
-        behavior: HitTestBehavior.opaque,
-        onTap: () {},
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0.88, end: 1),
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutBack,
-              builder: (context, value, child) {
-                return Opacity(
-                  opacity: value.clamp(0.0, 1.0).toDouble(),
-                  child: Transform.scale(scale: value, child: child),
-                );
-              },
-              child: _buildCard(),
-            ),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.88, end: 1),
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutBack,
+            builder: (context, value, child) {
+              return Opacity(
+                opacity: value.clamp(0.0, 1.0).toDouble(),
+                child: Transform.scale(
+                  scale: value,
+                  child: child,
+                ),
+              );
+            },
+            child: _buildCard(),
           ),
         ),
       ),
@@ -46,7 +61,7 @@ class PauseMenu extends StatelessWidget {
   Widget _buildCard() {
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(maxWidth: 340),
+      constraints: const BoxConstraints(maxWidth: 380),
       padding: const EdgeInsets.fromLTRB(24, 26, 24, 28),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -79,9 +94,12 @@ class PauseMenu extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // TITLE BADGE
+          // TITLE
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 22,
+              vertical: 8,
+            ),
             decoration: BoxDecoration(
               color: Colors.black.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(30),
@@ -112,8 +130,9 @@ class PauseMenu extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 26),
+          const SizedBox(height: 24),
 
+          // RESUME
           _PauseButton(
             text: 'RESUME',
             icon: Icons.play_arrow_rounded,
@@ -125,6 +144,7 @@ class PauseMenu extends StatelessWidget {
 
           const SizedBox(height: 16),
 
+          // RESTART
           _PauseButton(
             text: 'RESTART',
             icon: Icons.refresh_rounded,
@@ -134,8 +154,9 @@ class PauseMenu extends StatelessWidget {
             onPressed: onRestart,
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 22),
 
+          // OPTIONS
           _PauseButton(
             text: 'OPTIONS',
             icon: Icons.settings_rounded,
@@ -147,6 +168,7 @@ class PauseMenu extends StatelessWidget {
 
           const SizedBox(height: 16),
 
+          // MAIN MENU
           _PauseButton(
             text: 'MAIN MENU',
             icon: Icons.home_rounded,
@@ -161,7 +183,7 @@ class PauseMenu extends StatelessWidget {
   }
 }
 
-// CHUNKY 3D BUTTON (same style as the game buttons)
+// CHUNKY 3D BUTTON
 class _PauseButton extends StatefulWidget {
   final String text;
   final IconData icon;
@@ -189,17 +211,26 @@ class _PauseButtonState extends State<_PauseButton> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) {
+        setState(() => _isPressed = true);
+      },
       onTapUp: (_) {
         setState(() => _isPressed = false);
         widget.onPressed();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () {
+        setState(() => _isPressed = false);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         width: double.infinity,
         height: 54,
-        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
+        transform: Matrix4.translationValues(
+          0,
+          _isPressed ? 4 : 0,
+          0,
+        ),
         decoration: BoxDecoration(
           color: widget.color,
           borderRadius: BorderRadius.circular(18),
@@ -223,7 +254,11 @@ class _PauseButtonState extends State<_PauseButton> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(widget.icon, color: widget.foreground, size: 26),
+            Icon(
+              widget.icon,
+              color: widget.foreground,
+              size: 26,
+            ),
             const SizedBox(width: 8),
             Text(
               widget.text,

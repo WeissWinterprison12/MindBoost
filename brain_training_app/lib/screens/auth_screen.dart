@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -30,27 +31,23 @@ class _AuthScreenState extends State<AuthScreen> {
     super.initState();
     _initializeGoogleSignIn();
   }
-  
-  void _playAsGuest() {
-    if (_isLoading) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const LevelSelectScreen(),
-      ),
-    );
-  }
 
   Future<void> _initializeGoogleSignIn() async {
     try {
-      await GoogleSignIn.instance.initialize();
+      await GoogleSignIn.instance.initialize(
+        serverClientId:
+            '198068308833-jvq7fon65gasoevmu5fsrt9630drinit.apps.googleusercontent.com',
+      );
 
       if (mounted) {
         setState(() => _googleReady = true);
       }
     } catch (e) {
       debugPrint('Google Sign-In initialization failed: $e');
+
+      if (mounted) {
+        _showMessage('Google initialization failed: $e');
+      }
     }
   }
 
@@ -73,7 +70,179 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
+  
+  Future<String?> _askForUsername() async {
+    final controller = TextEditingController();
+    String? errorText;
 
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                title: const Text(
+                  'Choose Your Player Name',
+                  textAlign: TextAlign.center,
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'What should MindBoost call you? '
+                      'This name will be used in your game.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      maxLength: 20,
+                      textCapitalization:
+                          TextCapitalization.none,
+                      decoration: InputDecoration(
+                        labelText: 'In-game username',
+                        hintText: 'e.g. BrainMaster',
+                        prefixIcon: const Icon(
+                          Icons.person_outline,
+                        ),
+                        errorText: errorText,
+                        border: OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.circular(14),
+                        ),
+                      ),
+                      onChanged: (_) {
+                        setDialogState(() {
+                          errorText = null;
+                        });
+                      },
+                      onSubmitted: (_) {
+                        final username =
+                            controller.text.trim();
+
+                        if (RegExp(
+                          r'^[a-zA-Z0-9_]{3,20}$',
+                        ).hasMatch(username)) {
+                          Navigator.of(dialogContext)
+                              .pop(username);
+                        } else {
+                          setDialogState(() {
+                            errorText =
+                                'Use 3–20 letters, numbers, '
+                                'or underscores.';
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'You can use letters, numbers, '
+                      'and underscores.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+                actionsAlignment:
+                    MainAxisAlignment.center,
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                    },
+                    child: const Text('CANCEL'),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          const Color(0xFF811252),
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () {
+                      final username =
+                          controller.text.trim();
+
+                      if (!RegExp(
+                        r'^[a-zA-Z0-9_]{3,20}$',
+                      ).hasMatch(username)) {
+                        setDialogState(() {
+                          errorText =
+                              'Use 3–20 letters, numbers, '
+                              'or underscores.';
+                        });
+                        return;
+                      }
+
+                      Navigator.of(dialogContext)
+                          .pop(username);
+                    },
+                    child: const Text('SAVE USERNAME'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+
+  // GUEST MODE
+  // Sign out existing accounts so guest gameplay does not use
+  // an already-authenticated Firebase account.
+  Future<void> _playAsGuest() async {
+    if (_isLoading) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      await FirebaseAuth.instance.signOut();
+
+      // These sign-outs are best-effort. Guest play should still
+      // work even if a provider SDK cannot sign out.
+      try {
+        await GoogleSignIn.instance.signOut();
+      } catch (e) {
+        debugPrint('Google sign-out notice: $e');
+      }
+
+      try {
+        await FacebookAuth.instance.logOut();
+      } catch (e) {
+        debugPrint('Facebook logout notice: $e');
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const LevelSelectScreen(),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Guest mode error: $e');
+      _showMessage('Could not start guest mode. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  // SAVE USER PROFILE
   Future<void> _saveUserProfile(
     User user, {
     String? name,
@@ -86,14 +255,16 @@ class _AuthScreenState extends State<AuthScreen> {
     final existing = await doc.get();
 
     final enteredName = name?.trim();
-    final profileName = enteredName != null && enteredName.isNotEmpty
-        ? enteredName
-        : user.displayName;
+    final profileName =
+        enteredName != null && enteredName.isNotEmpty
+            ? enteredName
+            : user.displayName;
 
     final data = <String, dynamic>{
       'uid': user.uid,
       'email': user.email,
       'displayName': profileName,
+      'username': profileName,
       'photoUrl': user.photoURL,
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -102,7 +273,6 @@ class _AuthScreenState extends State<AuthScreen> {
       data['provider'] = provider;
     }
 
-    // Preserve the original account creation timestamp.
     if (!existing.exists) {
       data['createdAt'] = FieldValue.serverTimestamp();
     }
@@ -110,6 +280,8 @@ class _AuthScreenState extends State<AuthScreen> {
     await doc.set(data, SetOptions(merge: true));
   }
 
+  // FINISH SIGN-IN
+  
   Future<void> _finishSignIn(
     UserCredential credential, {
     String? name,
@@ -121,9 +293,46 @@ class _AuthScreenState extends State<AuthScreen> {
       throw Exception('Authentication returned no user.');
     }
 
+    String? selectedUsername = name?.trim();
+
+    // Ask for an in-game username after every Google
+    // or Facebook sign-in.
+    if (provider == 'google' ||
+        provider == 'facebook') {
+      selectedUsername = await _askForUsername();
+
+      // If the player cancels, return to the login screen.
+      if (selectedUsername == null) {
+        await FirebaseAuth.instance.signOut();
+
+        try {
+          if (provider == 'google') {
+            await GoogleSignIn.instance.signOut();
+          } else {
+            await FacebookAuth.instance.logOut();
+          }
+        } catch (e) {
+          debugPrint(
+            'Social sign-out after cancellation: $e',
+          );
+        }
+
+        if (mounted) {
+          _showMessage(
+            'Sign-in cancelled. Choose a username to continue.',
+          );
+        }
+        return;
+      }
+
+      // Set the Firebase display name to the chosen username.
+      await user.updateDisplayName(selectedUsername);
+      await user.reload();
+    }
+
     await _saveUserProfile(
       user,
-      name: name,
+      name: selectedUsername,
       provider: provider,
     );
 
@@ -137,7 +346,9 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  // EMAIL REGISTRATION AND LOGIN
   Future<void> _emailAuthentication() async {
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
 
     FocusScope.of(context).unfocus();
@@ -182,8 +393,10 @@ class _AuthScreenState extends State<AuthScreen> {
     } on FirebaseAuthException catch (e) {
       _showMessage(_authErrorMessage(e.code));
     } catch (e) {
-      _showMessage('Unable to sign in. Please try again.');
       debugPrint('Email authentication error: $e');
+      _showMessage(
+        'Unable to complete authentication. Please try again.',
+      );
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -211,11 +424,14 @@ class _AuthScreenState extends State<AuthScreen> {
         return 'Too many attempts. Please try again later.';
       case 'operation-not-allowed':
         return 'This sign-in method is not enabled in Firebase.';
+      case 'account-exists-with-different-credential':
+        return 'This email uses another sign-in method.';
       default:
         return 'Authentication failed: $code';
     }
   }
 
+  // GOOGLE SIGN-IN
   Future<void> _googleSignIn() async {
     if (!_googleReady || _isLoading) return;
 
@@ -226,12 +442,12 @@ class _AuthScreenState extends State<AuthScreen> {
           await GoogleSignIn.instance.authenticate();
 
       final googleAuth = googleUser.authentication;
-
       final idToken = googleAuth.idToken;
 
       if (idToken == null) {
         throw Exception(
-          'Google did not return an ID token. Check your Firebase configuration.',
+          'Google did not return an ID token. '
+          'Check Firebase and Google configuration.',
         );
       }
 
@@ -250,11 +466,11 @@ class _AuthScreenState extends State<AuthScreen> {
       );
     } on FirebaseAuthException catch (e) {
       _showMessage(_authErrorMessage(e.code));
-    } catch (e) {
-      _showMessage(
-        'Google Sign-In failed. Check your configuration and try again.',
-      );
+    } catch (e, stackTrace) {
       debugPrint('Google Sign-In error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
+      _showMessage('Google Sign-In failed: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -262,6 +478,7 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  // FACEBOOK SIGN-IN
   Future<void> _facebookSignIn() async {
     if (_isLoading) return;
 
@@ -271,13 +488,21 @@ class _AuthScreenState extends State<AuthScreen> {
       final result = await FacebookAuth.instance.login();
 
       if (result.status == LoginStatus.cancelled) {
+        _showMessage('Facebook Sign-In was cancelled.');
         return;
       }
 
       if (result.status != LoginStatus.success ||
           result.accessToken == null) {
+        debugPrint(
+          'Facebook login status: ${result.status}; '
+          'message: ${result.message}',
+        );
+
         _showMessage(
-          result.message ?? 'Facebook Sign-In was unsuccessful.',
+          result.message ??
+              'Facebook login was unsuccessful. '
+              'Check your Facebook configuration.',
         );
         return;
       }
@@ -296,12 +521,15 @@ class _AuthScreenState extends State<AuthScreen> {
         provider: 'facebook',
       );
     } on FirebaseAuthException catch (e) {
-      _showMessage(_authErrorMessage(e.code));
-    } catch (e) {
-      _showMessage(
-        'Facebook Sign-In failed. Check your Facebook configuration.',
+      debugPrint(
+        'Facebook FirebaseAuth error: ${e.code} - ${e.message}',
       );
+      _showMessage(_authErrorMessage(e.code));
+    } catch (e, stackTrace) {
       debugPrint('Facebook Sign-In error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
+      _showMessage('Facebook Sign-In failed: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -309,7 +537,10 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  // PASSWORD RESET
   Future<void> _resetPassword() async {
+    if (_isLoading) return;
+
     final email = _emailController.text.trim();
 
     if (email.isEmpty ||
@@ -332,8 +563,8 @@ class _AuthScreenState extends State<AuthScreen> {
     } on FirebaseAuthException catch (e) {
       _showMessage(_authErrorMessage(e.code));
     } catch (e) {
-      _showMessage('Could not send the reset email.');
       debugPrint('Password reset error: $e');
+      _showMessage('Could not send the reset email.');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -341,6 +572,7 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  // INPUT STYLING
   InputDecoration _inputDecoration({
     required String label,
     required IconData icon,
@@ -348,7 +580,10 @@ class _AuthScreenState extends State<AuthScreen> {
   }) {
     return InputDecoration(
       labelText: label,
-      prefixIcon: Icon(icon, color: const Color(0xFF811252)),
+      prefixIcon: Icon(
+        icon,
+        color: const Color(0xFF811252),
+      ),
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: Colors.white,
@@ -372,6 +607,7 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  // REUSABLE SOCIAL BUTTON
   Widget _socialButton({
     required String text,
     required Widget leading,
@@ -385,7 +621,9 @@ class _AuthScreenState extends State<AuthScreen> {
         style: OutlinedButton.styleFrom(
           backgroundColor: Colors.white,
           foregroundColor: const Color(0xFF351039),
-          side: BorderSide(color: Colors.purple.shade100),
+          side: BorderSide(
+            color: Colors.purple.shade100,
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -395,10 +633,13 @@ class _AuthScreenState extends State<AuthScreen> {
           children: [
             leading,
             const SizedBox(width: 12),
-            Text(
-              text,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
+            Flexible(
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -407,6 +648,7 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  // SCREEN UI
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -430,7 +672,9 @@ class _AuthScreenState extends State<AuthScreen> {
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(22),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 440),
+                constraints: const BoxConstraints(
+                  maxWidth: 440,
+                ),
                 child: Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
@@ -447,7 +691,8 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Form(
                     key: _formKey,
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      crossAxisAlignment:
+                          CrossAxisAlignment.stretch,
                       children: [
                         const Center(
                           child: Text(
@@ -456,6 +701,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
+
                         const Text(
                           'Welcome to MindBoost!',
                           textAlign: TextAlign.center,
@@ -465,7 +711,9 @@ class _AuthScreenState extends State<AuthScreen> {
                             color: Color(0xFF4A0E4E),
                           ),
                         ),
+
                         const SizedBox(height: 8),
+
                         Text(
                           _isRegistering
                               ? 'Create your player account'
@@ -475,6 +723,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             color: Colors.purple.shade700,
                           ),
                         ),
+
                         const SizedBox(height: 28),
 
                         if (_isRegistering) ...[
@@ -500,7 +749,8 @@ class _AuthScreenState extends State<AuthScreen> {
 
                         TextFormField(
                           controller: _emailController,
-                          keyboardType: TextInputType.emailAddress,
+                          keyboardType:
+                              TextInputType.emailAddress,
                           autofillHints: const [
                             AutofillHints.email,
                           ],
@@ -518,14 +768,19 @@ class _AuthScreenState extends State<AuthScreen> {
                             return null;
                           },
                         ),
+
                         const SizedBox(height: 16),
 
                         TextFormField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
                           autofillHints: _isRegistering
-                              ? const [AutofillHints.newPassword]
-                              : const [AutofillHints.password],
+                              ? const [
+                                  AutofillHints.newPassword,
+                                ]
+                              : const [
+                                  AutofillHints.password,
+                                ],
                           decoration: _inputDecoration(
                             label: 'Password',
                             icon: Icons.lock_outline,
@@ -544,7 +799,8 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                           ),
                           validator: (value) {
-                            if (value == null || value.isEmpty) {
+                            if (value == null ||
+                                value.isEmpty) {
                               return 'Enter your password.';
                             }
 
@@ -668,14 +924,17 @@ class _AuthScreenState extends State<AuthScreen> {
 
                         const SizedBox(height: 18),
 
+                        // GOOGLE SIGN-IN
                         _socialButton(
-                          text: 'Continue with Google',
+                          text: _googleReady
+                              ? 'Continue with Google'
+                              : 'Initializing Google...',
                           leading: const Text(
                             'G',
                             style: TextStyle(
-                              fontSize: 23,
-                              fontWeight: FontWeight.w900,
                               color: Color(0xFF4285F4),
+                              fontSize: 25,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                           onPressed:
@@ -684,6 +943,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
                         const SizedBox(height: 12),
 
+                        // FACEBOOK SIGN-IN
                         _socialButton(
                           text: 'Continue with Facebook',
                           leading: const Icon(
@@ -694,6 +954,50 @@ class _AuthScreenState extends State<AuthScreen> {
                           onPressed: _facebookSignIn,
                         ),
 
+                        const SizedBox(height: 16),
+
+                        // GUEST MODE
+                        OutlinedButton.icon(
+                          onPressed:
+                              _isLoading ? null : _playAsGuest,
+                          icon: const Icon(
+                            Icons.person_outline_rounded,
+                          ),
+                          label: const Text(
+                            'PLAY AS GUEST',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor:
+                                const Color(0xFF811252),
+                            minimumSize:
+                                const Size(double.infinity, 52),
+                            side: const BorderSide(
+                              color: Color(0xFF811252),
+                              width: 1.5,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.circular(16),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        const Text(
+                          'Guest progress and achievements '
+                          'will not be saved.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+
                         const SizedBox(height: 20),
 
                         TextButton.icon(
@@ -701,7 +1005,9 @@ class _AuthScreenState extends State<AuthScreen> {
                               ? null
                               : () => Navigator.pop(context),
                           icon: const Icon(Icons.arrow_back),
-                          label: const Text('Back to welcome screen'),
+                          label: const Text(
+                            'Back to welcome screen',
+                          ),
                           style: TextButton.styleFrom(
                             foregroundColor:
                                 const Color(0xFF811252),

@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+
+import 'auth_screen.dart';
 
 import '../game/math_game.dart';
 import '../game/science_puzzle.dart';
 import '../game/memory_match.dart';
-import '../game/pattern_logic.dart';
-import '../game/sequence.dart';
+import '../game/pattern_sequence.dart';
 import '../game/memory_matrix.dart';
 import '../game/logic_detective.dart';
 import '../game/path_finder.dart';
@@ -32,13 +37,16 @@ class LevelSelectScreen extends StatelessWidget {
         child: SafeArea(
           child: Column(
             children: [
+              // HEADER ROW: back arrow, LEVEL SELECT, profile
               Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
-                  vertical: 12,
+                  vertical: 6,
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment:
+                      MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     _build3DButton(
                       onTap: () => Navigator.pop(context),
@@ -48,6 +56,7 @@ class LevelSelectScreen extends StatelessWidget {
                         size: 28,
                       ),
                     ),
+
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
@@ -62,7 +71,7 @@ class LevelSelectScreen extends StatelessWidget {
                         ),
                       ),
                       child: const Text(
-                        "LEVEL SELECT",
+                        'LEVEL SELECT',
                         style: TextStyle(
                           color: Color(0xFFFFD700),
                           fontSize: 16,
@@ -71,6 +80,70 @@ class LevelSelectScreen extends StatelessWidget {
                         ),
                       ),
                     ),
+
+                    PlayerProfileButton(),
+                  ],
+                ),
+              ),
+
+              // TITLE (left) + STARS (right, under profile)
+              Padding(
+                // Right padding is 24 so the badge lines up with the
+                // profile avatar (16 screen padding + 8 button padding).
+                padding: const EdgeInsets.fromLTRB(20, 0, 24, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          ShaderMask(
+                            shaderCallback: (bounds) =>
+                                const LinearGradient(
+                              colors: [
+                                Color(0xFFFFF176),
+                                Color(0xFFFF8A65),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ).createShader(bounds),
+                            child: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                '🧠 MindBoost',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.2,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black45,
+                                      offset: Offset(2, 4),
+                                      blurRadius: 6,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Text(
+                            'Pick your puzzle arena!',
+                            style: TextStyle(
+                              color: Color(0xFFE0E0E0),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 12),
+
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -88,6 +161,7 @@ class LevelSelectScreen extends StatelessWidget {
                         ],
                       ),
                       child: const Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.star_rounded,
@@ -96,7 +170,7 @@ class LevelSelectScreen extends StatelessWidget {
                           ),
                           SizedBox(width: 4),
                           Text(
-                            "18/18",
+                            '18/18',
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -110,56 +184,24 @@ class LevelSelectScreen extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 5),
-
-              ShaderMask(
-                shaderCallback: (bounds) => const LinearGradient(
-                  colors: [
-                    Color(0xFFFFF176),
-                    Color(0xFFFF8A65),
-                  ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ).createShader(bounds),
-                child: const Text(
-                  "🧠 MindBoost",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 36,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.2,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black45,
-                        offset: Offset(2, 4),
-                        blurRadius: 6,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const Text(
-                "Pick your puzzle arena!",
-                style: TextStyle(
-                  color: Color(0xFFE0E0E0),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-
               const SizedBox(height: 15),
 
+              // GAME LEVELS
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 25),
+                  padding: const EdgeInsets.fromLTRB(
+                    16,
+                    10,
+                    16,
+                    25,
+                  ),
                   physics: const BouncingScrollPhysics(),
                   children: [
                     GameLevelCard(
-                      levelNum: "1",
-                      title: "Math Challenge",
-                      subtitle: "Speed & Accuracy",
-                      icon: "🔢",
+                      levelNum: '1',
+                      title: 'Math Challenge',
+                      subtitle: 'Speed & Accuracy',
+                      icon: '🔢',
                       gradientColors: const [
                         Color(0xFF00C6FF),
                         Color(0xFF0072FF),
@@ -169,11 +211,12 @@ class LevelSelectScreen extends StatelessWidget {
                       unlocked: true,
                       page: const MathGame(),
                     ),
+
                     GameLevelCard(
-                      levelNum: "2",
-                      title: "Science Puzzle",
-                      subtitle: "Memory & Observation",
-                      icon: "🔬",
+                      levelNum: '2',
+                      title: 'Science Puzzle',
+                      subtitle: 'Memory & Observation',
+                      icon: '🔬',
                       gradientColors: const [
                         Color(0xFF11998E),
                         Color(0xFF38EF7D),
@@ -183,11 +226,12 @@ class LevelSelectScreen extends StatelessWidget {
                       unlocked: true,
                       page: const SciencePuzzle(),
                     ),
+
                     GameLevelCard(
-                      levelNum: "3",
-                      title: "Memory Match",
-                      subtitle: "Focus & Attention",
-                      icon: "🧩",
+                      levelNum: '3',
+                      title: 'Memory Match',
+                      subtitle: 'Focus & Attention',
+                      icon: '🧩',
                       gradientColors: const [
                         Color(0xFF8E2DE2),
                         Color(0xFF4A00E0),
@@ -197,11 +241,13 @@ class LevelSelectScreen extends StatelessWidget {
                       unlocked: true,
                       page: const MemoryMatch(),
                     ),
+
+                    // Pattern Logic + Sequence Recall merged into one level.
                     GameLevelCard(
-                      levelNum: "4",
-                      title: "Pattern Logic",
-                      subtitle: "Logical Reasoning",
-                      icon: "🧠",
+                      levelNum: '4',
+                      title: 'Pattern & Sequence',
+                      subtitle: 'Logic & Recall',
+                      icon: '🧠',
                       gradientColors: const [
                         Color(0xFFFF8008),
                         Color(0xFFFFC837),
@@ -209,27 +255,14 @@ class LevelSelectScreen extends StatelessWidget {
                       borderColor: const Color(0xFFC76000),
                       starsEarned: 2,
                       unlocked: true,
-                      page: const PatternLogic(),
+                      page: const PatternSequence(),
                     ),
+
                     GameLevelCard(
-                      levelNum: "5",
-                      title: "Sequence Recall",
-                      subtitle: "Repeat the Order",
-                      icon: "🔄",
-                      gradientColors: const [
-                        Color(0xFFFF416C),
-                        Color(0xFFFF4B2B),
-                      ],
-                      borderColor: const Color(0xFFB31217),
-                      starsEarned: 1,
-                      unlocked: true,
-                      page: const SequenceRecall(),
-                    ),
-                    GameLevelCard(
-                      levelNum: "6",
-                      title: "Memory Matrix",
-                      subtitle: "Find the Mismatch",
-                      icon: "🎯",
+                      levelNum: '5',
+                      title: 'Memory Matrix',
+                      subtitle: 'Find the Mismatch',
+                      icon: '🎯',
                       gradientColors: const [
                         Color(0xFFF7971E),
                         Color(0xFFFFD200),
@@ -240,12 +273,11 @@ class LevelSelectScreen extends StatelessWidget {
                       page: const MemoryMatrix(),
                     ),
 
-                    // LEVEL 7: LOGIC DETECTIVE
                     GameLevelCard(
-                      levelNum: "7",
-                      title: "Logic Detective",
-                      subtitle: "Solve the Mystery",
-                      icon: "🔎",
+                      levelNum: '6',
+                      title: 'Logic Detective',
+                      subtitle: 'Solve the Mystery',
+                      icon: '🔎',
                       gradientColors: const [
                         Color(0xFF654EA3),
                         Color(0xFFEAAFC8),
@@ -255,13 +287,12 @@ class LevelSelectScreen extends StatelessWidget {
                       unlocked: true,
                       page: const LogicDetective(),
                     ),
-              
-                    // LEVEL 8: PATH FINDER
+
                     GameLevelCard(
-                      levelNum: "8",
-                      title: "Path Finder",
-                      subtitle: "Navigate the Maze",
-                      icon: "🧭",
+                      levelNum: '7',
+                      title: 'Path Finder',
+                      subtitle: 'Navigate the Maze',
+                      icon: '🧭',
                       gradientColors: const [
                         Color(0xFF39216C),
                         Color(0xFF160B36),
@@ -271,13 +302,12 @@ class LevelSelectScreen extends StatelessWidget {
                       unlocked: true,
                       page: const PathFinder(),
                     ),
-                    
-                    // LEVEL 9: 4 PICS 1 WORD
+
                     GameLevelCard(
-                      levelNum: "9",
-                      title: "Word Quest",
-                      subtitle: "Four Pics, One Word",
-                      icon: "🧩",
+                      levelNum: '8',
+                      title: 'Word Quest',
+                      subtitle: 'Four Pics, One Word',
+                      icon: '🧩',
                       gradientColors: const [
                         Color(0xFF7C83FF),
                         Color(0xFF5146D8),
@@ -286,14 +316,7 @@ class LevelSelectScreen extends StatelessWidget {
                       starsEarned: 0,
                       unlocked: true,
                       page: const WordQuestGame(),
-                    ),
-
-
-                    const LockedLevelCard(
-                      levelNum: "10",
-                      title: "Coming Soon",
-                      subtitle: "Final brain challenge!",
-                    ),
+                    )
                   ],
                 ),
               ),
@@ -334,6 +357,409 @@ class LevelSelectScreen extends StatelessWidget {
   }
 }
 
+// ============================================================
+// PLAYER PROFILE BUTTON
+// Displays the provider's profile photo and saved username.
+// ============================================================
+
+class PlayerProfileButton extends StatelessWidget {
+  PlayerProfileButton({super.key});
+
+  String _getUsername(
+    User user,
+    Map<String, dynamic>? data,
+  ) {
+    final savedUsername = data?['username'];
+
+    if (savedUsername is String &&
+        savedUsername.trim().isNotEmpty) {
+      return savedUsername.trim();
+    }
+
+    final displayName = user.displayName;
+
+    if (displayName != null &&
+        displayName.trim().isNotEmpty) {
+      return displayName.trim();
+    }
+
+    final email = user.email;
+
+    if (email != null && email.contains('@')) {
+      return email.split('@').first;
+    }
+
+    return 'Player';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return _buildProfile(
+        context,
+        username: 'Guest Player',
+        photoUrl: null,
+        user: null,
+      );
+    }
+
+    return StreamBuilder<
+        DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data();
+
+        final username = _getUsername(user, data);
+
+        final savedPhoto = data?['photoUrl'];
+
+        final photoUrl =
+            user.photoURL ??
+            (savedPhoto is String ? savedPhoto : null);
+
+        return _buildProfile(
+          context,
+          username: username,
+          photoUrl: photoUrl,
+          user: user,
+        );
+      },
+    );
+  }
+
+  Widget _buildProfile(
+    BuildContext context, {
+    required String username,
+    required String? photoUrl,
+    required User? user,
+  }) {
+    return Tooltip(
+      message: 'Account settings',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          _showAccountSettings(
+            context,
+            user: user,
+            username: username,
+            photoUrl: photoUrl,
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: 4,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFFFFD700),
+                    width: 2,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 5,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: CircleAvatar(
+                  radius: 23,
+                  backgroundColor: Colors.white,
+                  child: ClipOval(
+                    child: _profileImage(
+                      photoUrl,
+                      46,
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 4),
+
+              ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 110,
+                ),
+                child: Text(
+                  username,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _profileImage(
+    String? photoUrl,
+    double size,
+  ) {
+    if (photoUrl == null || photoUrl.isEmpty) {
+      return Icon(
+        Icons.person,
+        size: size * 0.65,
+        color: const Color(0xFF811252),
+      );
+    }
+
+    return Image.network(
+      photoUrl,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Icon(
+          Icons.person,
+          size: size * 0.65,
+          color: const Color(0xFF811252),
+        );
+      },
+    );
+  }
+
+  void _showAccountSettings(
+    BuildContext context, {
+    required User? user,
+    required String username,
+    required String? photoUrl,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(
+            24,
+            12,
+            24,
+            28,
+          ),
+          decoration: const BoxDecoration(
+            color: Color(0xFFFFFBFF),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // BOTTOM SHEET HANDLE
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+
+                const SizedBox(height: 22),
+
+                // PROFILE PICTURE
+                CircleAvatar(
+                  radius: 38,
+                  backgroundColor: const Color(0xFFF1DDF4),
+                  child: ClipOval(
+                    child: _profileImage(
+                      photoUrl,
+                      76,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                const Text(
+                  'ACCOUNT SETTINGS',
+                  style: TextStyle(
+                    color: Color(0xFF4A0E4E),
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1,
+                  ),
+                ),
+
+                const SizedBox(height: 6),
+
+                Text(
+                  username,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF811252),
+                    fontSize: 23,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(height: 5),
+
+                Text(
+                  user?.email ?? 'Playing as a guest',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontSize: 14,
+                  ),
+                ),
+
+                const SizedBox(height: 22),
+                const Divider(),
+                const SizedBox(height: 8),
+
+                // USERNAME
+                ListTile(
+                  leading: const Icon(
+                    Icons.person_outline,
+                    color: Color(0xFF811252),
+                  ),
+                  title: const Text('Player username'),
+                  subtitle: Text(username),
+                ),
+
+                // ACCOUNT STATUS
+                ListTile(
+                  leading: const Icon(
+                    Icons.emoji_events_outlined,
+                    color: Color(0xFF811252),
+                  ),
+                  title: const Text('MindBoost Player'),
+                  subtitle: Text(
+                    user == null
+                        ? 'Guest account'
+                        : 'Signed in to save your progress',
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // SIGN OUT
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.logout_rounded),
+                    label: Text(
+                      user == null
+                          ? 'EXIT GUEST MODE'
+                          : 'SIGN OUT',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF811252),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: () async {
+                      Navigator.pop(sheetContext);
+
+                      try {
+                        final providers = user
+                                ?.providerData
+                                .map((provider) =>
+                                    provider.providerId)
+                                .toSet() ??
+                            <String>{};
+
+                        // Sign out of Firebase first.
+                        await FirebaseAuth.instance.signOut();
+
+                        // Sign out of Google if used.
+                        if (providers.contains('google.com')) {
+                          try {
+                            await GoogleSignIn.instance.signOut();
+                          } catch (e) {
+                            debugPrint(
+                              'Google sign-out notice: $e',
+                            );
+                          }
+                        }
+
+                        // Sign out of Facebook if used.
+                        if (providers.contains('facebook.com')) {
+                          try {
+                            await FacebookAuth.instance.logOut();
+                          } catch (e) {
+                            debugPrint(
+                              'Facebook logout notice: $e',
+                            );
+                          }
+                        }
+
+                        if (!context.mounted) return;
+
+                        // Return to authentication and clear
+                        // the previous navigation stack.
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(
+                            builder: (_) => const AuthScreen(),
+                          ),
+                          (route) => false,
+                        );
+                      } catch (e) {
+                        debugPrint(
+                          'Account sign-out failed: $e',
+                        );
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Unable to sign out. Please try again.',
+                              ),
+                            ),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                  },
+                  child: const Text('CANCEL'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ============================================================
+// GAME LEVEL CARD
+// ============================================================
+
 class GameLevelCard extends StatefulWidget {
   final String levelNum;
   final String title;
@@ -368,7 +794,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) {
+        setState(() => _isPressed = true);
+      },
       onTapUp: (_) {
         setState(() => _isPressed = false);
 
@@ -384,7 +812,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
           ),
         );
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () {
+        setState(() => _isPressed = false);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         margin: const EdgeInsets.only(bottom: 18),
@@ -445,7 +875,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ),
                 ),
               ),
+
               const SizedBox(width: 14),
+
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -460,7 +892,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
-                        "LEVEL ${widget.levelNum}",
+                        'LEVEL ${widget.levelNum}',
                         style: const TextStyle(
                           color: Color(0xFFFFD700),
                           fontSize: 11,
@@ -469,7 +901,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 3),
+
                     Text(
                       widget.title,
                       style: const TextStyle(
@@ -485,6 +919,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         ],
                       ),
                     ),
+
                     Text(
                       widget.subtitle,
                       style: TextStyle(
@@ -493,7 +928,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+
                     const SizedBox(height: 6),
+
                     Row(
                       children: List.generate(3, (index) {
                         return Icon(
@@ -510,6 +947,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ],
                 ),
               ),
+
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -537,6 +975,10 @@ class _GameLevelCardState extends State<GameLevelCard> {
     );
   }
 }
+
+// ============================================================
+// LOCKED LEVEL CARD
+// ============================================================
 
 class LockedLevelCard extends StatelessWidget {
   final String levelNum;
@@ -583,19 +1025,22 @@ class LockedLevelCard extends StatelessWidget {
               ),
             ),
           ),
+
           const SizedBox(width: 14),
+
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "LEVEL $levelNum",
+                  'LEVEL $levelNum',
                   style: const TextStyle(
                     color: Colors.white54,
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+
                 Text(
                   title,
                   style: const TextStyle(
@@ -604,6 +1049,7 @@ class LockedLevelCard extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+
                 Text(
                   subtitle,
                   style: const TextStyle(

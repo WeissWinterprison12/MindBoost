@@ -1,0 +1,7 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MindBoost</string>
+    <string name="facebook_app_id">1819830139329306</string>
+    <string name="facebook_client_token">b83d9db4b65966a4d7f26f8ca320019c</string>
+    <string name="fb_login_protocol_scheme">fb1819830139329306</string>
+</resources>
