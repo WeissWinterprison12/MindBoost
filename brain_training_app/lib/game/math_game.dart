@@ -52,6 +52,14 @@ class _MathGameState extends State<MathGame> {
   // Tracks whether the music has been stopped because volume was 0%.
   bool _musicStoppedForMute = false;
 
+  // While a sound effect plays, the music drops to this fraction of its
+  // normal volume (0.3 = 30%) and then returns to normal.
+  static const double _duckLevel = 0.3;
+
+  // Used to cancel an older "restore the music volume" step when a new
+  // sound effect starts before the previous one has finished.
+  int _duckToken = 0;
+
   int xp = 0;
   int streak = 0;
   int bestStreak = 0;
@@ -77,13 +85,43 @@ class _MathGameState extends State<MathGame> {
       duration: const Duration(seconds: 2),
     );
 
-    _startBackgroundMusic();
+    _initAudio();
     generateQuestion();
   }
 
   // ============================================================
   // AUDIO
   // ============================================================
+
+  Future<void> _initAudio() async {
+    await _configureAudio();
+    await _startBackgroundMusic();
+  }
+
+  /// Lets the music and the sound effects play at the same time.
+  ///
+  /// By default each player takes over the phone's audio "focus", so
+  /// when a sound effect starts, the music player is stopped by the
+  /// system and never comes back. These settings make the players mix
+  /// instead of fighting for focus.
+  Future<void> _configureAudio() async {
+    final AudioContext audioContext = AudioContext(
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.mixWithOthers},
+      ),
+      android: AudioContextAndroid(
+        audioFocus: AndroidAudioFocus.none,
+      ),
+    );
+
+    try {
+      await _musicPlayer.setAudioContext(audioContext);
+      await _audioPlayer.setAudioContext(audioContext);
+    } catch (error) {
+      debugPrint('Could not set audio mixing: $error');
+    }
+  }
 
   Future<void> _startBackgroundMusic() async {
     if (musicVolume <= 0.0) {
@@ -119,10 +157,50 @@ class _MathGameState extends State<MathGame> {
     }
   }
 
+  /// Lowers the music while a sound effect plays, then brings it back
+  /// to its normal volume when the effect finishes.
+  Future<void> _duckMusic() async {
+    if (musicVolume <= 0.0 || _musicStoppedForMute) return;
+    if (isPaused || gameOver) return;
+
+    final int token = ++_duckToken;
+
+    // Start listening before the effect plays so we don't miss the end.
+    final Future<void> effectFinished = _audioPlayer.onPlayerComplete.first;
+
+    try {
+      await _musicPlayer.setVolume(musicVolume * _duckLevel);
+    } catch (error) {
+      debugPrint('Could not lower music volume: $error');
+    }
+
+    try {
+      // Wait for the effect to finish (or give up after 3 seconds).
+      await Future.any<void>([
+        effectFinished,
+        Future<void>.delayed(const Duration(seconds: 3)),
+      ]);
+    } catch (error) {
+      debugPrint('Sound effect wait failed: $error');
+    }
+
+    // A newer sound effect started, or the screen was closed.
+    if (!mounted || token != _duckToken) return;
+
+    try {
+      await _musicPlayer.setVolume(musicVolume);
+    } catch (error) {
+      debugPrint('Could not restore music volume: $error');
+    }
+  }
+
   Future<void> _playSound(String fileName) async {
     if (soundVolume <= 0.0) {
       return;
     }
+
+    // Dip the music a little while the effect plays.
+    _duckMusic();
 
     try {
       await _audioPlayer.stop();
@@ -234,6 +312,9 @@ class _MathGameState extends State<MathGame> {
     if (gameOver || isPaused) return;
 
     questionTimer?.cancel();
+
+    // Cancel any pending "restore the music volume" step.
+    _duckToken++;
 
     setState(() {
       isPaused = true;
@@ -644,6 +725,7 @@ class _MathGameState extends State<MathGame> {
   void restartGame() {
     questionTimer?.cancel();
     _gameSession++;
+    _duckToken++;
 
     setState(() {
       num1 = 0;
@@ -696,6 +778,7 @@ class _MathGameState extends State<MathGame> {
   @override
   void dispose() {
     _gameSession++;
+    _duckToken++;
 
     confettiController.dispose();
     questionTimer?.cancel();
