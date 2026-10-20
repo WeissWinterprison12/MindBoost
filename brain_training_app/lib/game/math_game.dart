@@ -23,7 +23,21 @@ class _MathGameState extends State<MathGame> {
   late ConfettiController confettiController;
   Timer? questionTimer;
 
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  // One player per sound effect. Each one is loaded in advance, so the
+  // sound starts the instant it is called (no loading delay).
+  final AudioPlayer _correctPlayer = AudioPlayer();
+  final AudioPlayer _wrongPlayer = AudioPlayer();
+  final AudioPlayer _completePlayer = AudioPlayer();
+
+  late final List<AudioPlayer> _effectPlayers = [
+    _correctPlayer,
+    _wrongPlayer,
+    _completePlayer,
+  ];
+
+  // True once all the sound effects have finished loading.
+  bool _effectsReady = false;
+
   final AudioPlayer _musicPlayer = AudioPlayer();
 
   int num1 = 0;
@@ -95,7 +109,33 @@ class _MathGameState extends State<MathGame> {
 
   Future<void> _initAudio() async {
     await _configureAudio();
-    await _startBackgroundMusic();
+
+    // Load the sound effects while the music starts.
+    await Future.wait([
+      _loadSoundEffects(),
+      _startBackgroundMusic(),
+    ]);
+  }
+
+  /// Loads every sound effect ahead of time. Loading a sound only when it
+  /// is needed causes a noticeable delay, which made the wrong-answer
+  /// sound play late.
+  Future<void> _loadSoundEffects() async {
+    try {
+      for (final AudioPlayer player in _effectPlayers) {
+        await player.setReleaseMode(ReleaseMode.stop);
+        await player.setVolume(soundVolume);
+      }
+
+      await _correctPlayer.setSource(AssetSource('sounds/correct.mp3'));
+      await _wrongPlayer.setSource(AssetSource('sounds/wrong.mp3'));
+      await _completePlayer.setSource(AssetSource('sounds/level up.mp3'));
+
+      _effectsReady = true;
+    } catch (error) {
+      // The game still works: sounds fall back to loading when played.
+      debugPrint('Could not preload sound effects: $error');
+    }
   }
 
   /// Lets the music and the sound effects play at the same time.
@@ -117,7 +157,10 @@ class _MathGameState extends State<MathGame> {
 
     try {
       await _musicPlayer.setAudioContext(audioContext);
-      await _audioPlayer.setAudioContext(audioContext);
+
+      for (final AudioPlayer player in _effectPlayers) {
+        await player.setAudioContext(audioContext);
+      }
     } catch (error) {
       debugPrint('Could not set audio mixing: $error');
     }
@@ -159,14 +202,14 @@ class _MathGameState extends State<MathGame> {
 
   /// Lowers the music while a sound effect plays, then brings it back
   /// to its normal volume when the effect finishes.
-  Future<void> _duckMusic() async {
+  Future<void> _duckMusic(AudioPlayer effectPlayer) async {
     if (musicVolume <= 0.0 || _musicStoppedForMute) return;
     if (isPaused || gameOver) return;
 
     final int token = ++_duckToken;
 
     // Start listening before the effect plays so we don't miss the end.
-    final Future<void> effectFinished = _audioPlayer.onPlayerComplete.first;
+    final Future<void> effectFinished = effectPlayer.onPlayerComplete.first;
 
     try {
       await _musicPlayer.setVolume(musicVolume * _duckLevel);
@@ -194,42 +237,52 @@ class _MathGameState extends State<MathGame> {
     }
   }
 
-  Future<void> _playSound(String fileName) async {
+  /// Plays a preloaded sound effect right away.
+  Future<void> _playEffect(AudioPlayer player, String fileName) async {
     if (soundVolume <= 0.0) {
       return;
     }
 
     // Dip the music a little while the effect plays.
-    _duckMusic();
+    _duckMusic(player);
 
     try {
-      await _audioPlayer.stop();
-      await _audioPlayer.setVolume(soundVolume);
-
-      await _audioPlayer.play(
-        AssetSource('sounds/$fileName'),
-        volume: soundVolume,
-      );
-
-      debugPrint(
-        'Playing sound: $fileName at '
-        '${(soundVolume * 100).round()}%',
-      );
+      if (_effectsReady) {
+        // Already loaded: restart from the beginning and play instantly.
+        await player.stop();
+        await player.resume();
+      } else {
+        // Not loaded yet: load and play.
+        await player.play(
+          AssetSource('sounds/$fileName'),
+          volume: soundVolume,
+        );
+      }
     } catch (error) {
       debugPrint('Could not play sound $fileName: $error');
+
+      // Last try: load and play it the slower way.
+      try {
+        await player.play(
+          AssetSource('sounds/$fileName'),
+          volume: soundVolume,
+        );
+      } catch (retryError) {
+        debugPrint('Retry failed for $fileName: $retryError');
+      }
     }
   }
 
   void playCorrectSound() {
-    _playSound('correct.mp3');
+    _playEffect(_correctPlayer, 'correct.mp3');
   }
 
   void playWrongSound() {
-    _playSound('wrong.mp3');
+    _playEffect(_wrongPlayer, 'wrong.mp3');
   }
 
   void playCompleteSound() {
-    _playSound('level up.mp3');
+    _playEffect(_completePlayer, 'level up.mp3');
   }
 
   Future<void> changeMusicVolume(double value) async {
@@ -285,7 +338,9 @@ class _MathGameState extends State<MathGame> {
     });
 
     try {
-      await _audioPlayer.setVolume(volume);
+      for (final AudioPlayer player in _effectPlayers) {
+        await player.setVolume(volume);
+      }
 
       debugPrint(
         'Sound effects volume set to '
@@ -323,7 +378,10 @@ class _MathGameState extends State<MathGame> {
 
     FocusScope.of(context).unfocus();
 
-    _audioPlayer.pause();
+    for (final AudioPlayer player in _effectPlayers) {
+      player.pause();
+    }
+
     _musicPlayer.pause();
   }
 
@@ -352,10 +410,8 @@ class _MathGameState extends State<MathGame> {
     if (!mounted) return;
 
     try {
-      if (soundVolume > 0.0) {
-        await _audioPlayer.setVolume(soundVolume);
-      } else {
-        await _audioPlayer.setVolume(0.0);
+      for (final AudioPlayer player in _effectPlayers) {
+        await player.setVolume(soundVolume);
       }
     } catch (error) {
       debugPrint('Could not restore sound volume: $error');
@@ -629,14 +685,15 @@ class _MathGameState extends State<MathGame> {
         bestStreak = streak;
       }
 
-      showXpGain(xpEarned);
       playCorrectSound();
+      showXpGain(xpEarned);
     } else {
       wrongCount++;
       streak = 0;
 
-      triggerScreenShake();
+      // Sound first, so it starts at the same moment as the shake.
       playWrongSound();
+      triggerScreenShake();
     }
 
     setState(() {
@@ -783,7 +840,10 @@ class _MathGameState extends State<MathGame> {
     confettiController.dispose();
     questionTimer?.cancel();
 
-    _audioPlayer.dispose();
+    for (final AudioPlayer player in _effectPlayers) {
+      player.dispose();
+    }
+
     _musicPlayer.dispose();
 
     focusNode.dispose();
