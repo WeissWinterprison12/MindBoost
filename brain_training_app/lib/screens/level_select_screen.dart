@@ -14,10 +14,56 @@ import '../game/memory_matrix.dart';
 import '../game/logic_detective.dart';
 import '../game/path_finder.dart';
 import '../game/word_quest.dart';
+import '../services/menu_music.dart';
 import '../widgets/game_loading_screen.dart';
 
-class LevelSelectScreen extends StatelessWidget {
+class LevelSelectScreen extends StatefulWidget {
   const LevelSelectScreen({super.key});
+
+  @override
+  State<LevelSelectScreen> createState() => _LevelSelectScreenState();
+}
+
+class _LevelSelectScreenState extends State<LevelSelectScreen>
+    with RouteAware {
+  // ============================================================
+  // MENU MUSIC
+  // The music keeps playing here, pauses while a game is open, and
+  // starts again when the player comes back to this screen.
+  // ============================================================
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final route = ModalRoute.of(context);
+
+    if (route is PageRoute) {
+      menuRouteObserver.subscribe(this, route);
+    }
+  }
+
+  // A game (or its loading screen) was opened on top of this screen.
+  @override
+  void didPushNext() {
+    MenuMusic.instance.pause();
+  }
+
+  // The game was closed and this screen is visible again.
+  @override
+  void didPopNext() {
+    MenuMusic.instance.restart();
+  }
+
+  @override
+  void dispose() {
+    menuRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +362,7 @@ class LevelSelectScreen extends StatelessWidget {
                       starsEarned: 0,
                       unlocked: true,
                       page: const WordQuestGame(),
-                    )
+                    ),
                   ],
                 ),
               ),

@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'screens/level_select_screen.dart';
 import 'screens/auth_screen.dart';
+import 'services/menu_music.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +15,10 @@ void main() async {
   );
 
   runApp(const MyApp());
+
+  // Start the menu music as soon as the app opens. It keeps playing
+  // through the level select screen and only pauses inside a game.
+  MenuMusic.instance.start();
 }
 
 class MyApp extends StatelessWidget {
@@ -30,6 +35,7 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
+      navigatorObservers: [menuRouteObserver],
       home: const HomeScreen(),
     );
   }
@@ -39,6 +45,10 @@ class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   void _startGame(BuildContext context) {
+    // Web browsers block audio until the first tap, so make sure the
+    // music is running now (does nothing if it is already playing).
+    MenuMusic.instance.start();
+
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
@@ -152,10 +162,19 @@ class HomeScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: const Center(
-                      child: Text(
-                        '🧠',
-                        style: TextStyle(fontSize: 70),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/mindboost_logo.jpg',
+                        fit: BoxFit.cover,
+                        // If the image can't be loaded, show the brain emoji.
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Center(
+                            child: Text(
+                              '🧠',
+                              style: TextStyle(fontSize: 70),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),

@@ -104,7 +104,7 @@ class _MathGameState extends State<MathGame> {
       await _musicPlayer.setVolume(musicVolume);
 
       await _musicPlayer.play(
-        AssetSource('sounds/Unfolding_Patterns.mp3'),
+        AssetSource('sounds/Bouncing_Thoughts.mp3'),
         volume: musicVolume,
       );
 
