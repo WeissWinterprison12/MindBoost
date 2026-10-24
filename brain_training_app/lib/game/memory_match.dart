@@ -341,7 +341,8 @@ class _MemoryMatchState extends State<MemoryMatch>
     if (previewing) {
       startPreview();
     } else if (checkingPair) {
-      checkPair();
+      // Resume the pending pair check without replaying its sound effect.
+      checkPair(playFeedback: false);
       startGameTimer();
     } else {
       startGameTimer();
@@ -460,12 +461,27 @@ class _MemoryMatchState extends State<MemoryMatch>
   // CHECK PAIR
   // ============================================================
 
-  void checkPair() {
+  void checkPair({bool playFeedback = true}) {
     if (firstSelectedIndex == null || secondSelectedIndex == null) {
       return;
     }
 
     pairCheckTimer?.cancel();
+
+    // Determine the result immediately so the sound matches the player's move.
+    // The 700 ms timer below only keeps both cards visible briefly before hiding
+    // a mismatch or locking in a match.
+    final int firstIndex = firstSelectedIndex!;
+    final int secondIndex = secondSelectedIndex!;
+    final bool isMatch = cards[firstIndex] == cards[secondIndex];
+
+    if (playFeedback) {
+      if (isMatch) {
+        playCorrectSound();
+      } else {
+        playWrongSound();
+      }
+    }
 
     pairCheckTimer = Timer(
       const Duration(milliseconds: 700),
@@ -473,14 +489,7 @@ class _MemoryMatchState extends State<MemoryMatch>
         if (!mounted) return;
         if (isPaused) return;
 
-        final firstIndex = firstSelectedIndex!;
-        final secondIndex = secondSelectedIndex!;
-
-        final bool isMatch = cards[firstIndex] == cards[secondIndex];
-
         if (isMatch) {
-          playCorrectSound();
-
           setState(() {
             matched[firstIndex] = true;
             matched[secondIndex] = true;
@@ -497,8 +506,6 @@ class _MemoryMatchState extends State<MemoryMatch>
             endGame(true);
           }
         } else {
-          playWrongSound();
-
           setState(() {
             revealed[firstIndex] = false;
             revealed[secondIndex] = false;
@@ -618,11 +625,10 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   Future<void> _playSound(String assetName) async {
-    if (soundVolume <= 0.0) return;
+    if (soundVolume <= 0.0 || !mounted) return;
 
     try {
-      await audioPlayer.stop();
-      await audioPlayer.setVolume(soundVolume);
+      // Play immediately; stopping the player first added avoidable latency.
       await audioPlayer.play(
         AssetSource(assetName),
         volume: soundVolume,
