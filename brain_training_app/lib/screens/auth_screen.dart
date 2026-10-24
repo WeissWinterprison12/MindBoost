@@ -1,10 +1,11 @@
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../widgets/player_avatar.dart';
 import 'level_select_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -15,49 +16,148 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  final _formKey = GlobalKey<FormState>();
+  static const _adjectives = [
+    'Brainy',
+    'Clever',
+    'Swift',
+    'Cosmic',
+    'Mighty',
+    'Sneaky',
+    'Lucky',
+    'Sharp',
+    'Bright',
+    'Wild',
+    'Turbo',
+    'Magic',
+  ];
+
+  static const _nouns = [
+    'Fox',
+    'Owl',
+    'Panda',
+    'Wizard',
+    'Ninja',
+    'Tiger',
+    'Falcon',
+    'Robot',
+    'Dragon',
+    'Genius',
+    'Comet',
+    'Otter',
+  ];
 
   final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+  final _random = Random();
 
-  bool _isRegistering = false;
+  int _avatarIndex = 0;
   bool _isLoading = false;
-  bool _obscurePassword = true;
-  bool _googleReady = false;
+  String? _errorText;
 
   @override
   void initState() {
     super.initState();
-    _initializeGoogleSignIn();
-  }
-
-  Future<void> _initializeGoogleSignIn() async {
-    try {
-      await GoogleSignIn.instance.initialize(
-        serverClientId:
-            '198068308833-jvq7fon65gasoevmu5fsrt9630drinit.apps.googleusercontent.com',
-      );
-
-      if (mounted) {
-        setState(() => _googleReady = true);
-      }
-    } catch (e) {
-      debugPrint('Google Sign-In initialization failed: $e');
-
-      if (mounted) {
-        _showMessage('Google initialization failed: $e');
-      }
-    }
+    _nameController.text = _randomName();
+    _loadExistingProfile();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
     super.dispose();
   }
+
+  // Load the local profile first so the screen works without internet.
+  // If Firebase is available, refresh the local copy from the cloud.
+  Future<void> _loadExistingProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final localUsername = prefs.getString('player_username');
+      final localAvatar = prefs.getInt('player_avatar');
+
+      if (mounted) {
+        setState(() {
+          if (localUsername != null &&
+              localUsername.trim().isNotEmpty) {
+            _nameController.text = localUsername.trim();
+          }
+
+          if (localAvatar != null) {
+            _avatarIndex =
+                localAvatar.clamp(0, kAvatarCount - 1);
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Could not load local profile: $e');
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get()
+          .timeout(const Duration(seconds: 4));
+
+      final data = doc.data();
+      if (data == null || !mounted) return;
+
+      final username = data['username'];
+      final avatar = data['avatar'];
+
+      final prefs = await SharedPreferences.getInstance();
+
+      if (username is String && username.trim().isNotEmpty) {
+        await prefs.setString(
+          'player_username',
+          username.trim(),
+        );
+      }
+
+      if (avatar is int) {
+        await prefs.setInt(
+          'player_avatar',
+          avatar.clamp(0, kAvatarCount - 1),
+        );
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        if (username is String && username.trim().isNotEmpty) {
+          _nameController.text = username.trim();
+        }
+
+        if (avatar is int) {
+          _avatarIndex =
+              avatar.clamp(0, kAvatarCount - 1);
+        }
+      });
+    } catch (e) {
+      debugPrint('Could not refresh profile from Firebase: $e');
+    }
+  }
+
+  String _randomName() {
+    final adjective =
+        _adjectives[_random.nextInt(_adjectives.length)];
+    final noun = _nouns[_random.nextInt(_nouns.length)];
+
+    return '$adjective$noun${_random.nextInt(100)}';
+  }
+
+  void _generateRandomName() {
+    setState(() {
+      _nameController.text = _randomName();
+      _errorText = null;
+    });
+  }
+
+  bool get _isNameValid => RegExp(
+        r'^[a-zA-Z0-9_]{3,20}$',
+      ).hasMatch(_nameController.text.trim());
 
   void _showMessage(String message) {
     if (!mounted) return;
@@ -70,161 +170,191 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
-  
-  Future<String?> _askForUsername() async {
-    final controller = TextEditingController();
-    String? errorText;
 
-    try {
-      return await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              return AlertDialog(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
+  // AVATAR PICKER
+  Future<void> _pickAvatar() async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
+          decoration: const BoxDecoration(
+            color: Color(0xFFFFFBFF),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-                title: const Text(
-                  'Choose Your Player Name',
-                  textAlign: TextAlign.center,
+                const SizedBox(height: 18),
+                const Text(
+                  'CHOOSE YOUR AVATAR',
+                  style: TextStyle(
+                    color: Color(0xFF4A0E4E),
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1,
+                  ),
                 ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'What should MindBoost call you? '
-                      'This name will be used in your game.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 20),
-                    TextField(
-                      controller: controller,
-                      autofocus: true,
-                      maxLength: 20,
-                      textCapitalization:
-                          TextCapitalization.none,
-                      decoration: InputDecoration(
-                        labelText: 'In-game username',
-                        hintText: 'e.g. BrainMaster',
-                        prefixIcon: const Icon(
-                          Icons.person_outline,
+                const SizedBox(height: 18),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: kAvatarCount,
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    mainAxisSpacing: 14,
+                    crossAxisSpacing: 14,
+                  ),
+                  itemBuilder: (context, index) {
+                    final selected = index == _avatarIndex;
+
+                    return GestureDetector(
+                      onTap: () =>
+                          Navigator.pop(sheetContext, index),
+                      child: AnimatedContainer(
+                        duration:
+                            const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: selected
+                                ? const Color(0xFFFFD700)
+                                : Colors.purple.shade100,
+                            width: selected ? 3.5 : 2,
+                          ),
+                          boxShadow: selected
+                              ? const [
+                                  BoxShadow(
+                                    color: Color(0x66FF8008),
+                                    blurRadius: 10,
+                                    spreadRadius: 1,
+                                  ),
+                                ]
+                              : null,
                         ),
-                        errorText: errorText,
-                        border: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(14),
+                        child: LayoutBuilder(
+                          builder: (context, c) => PlayerAvatar(
+                            index: index,
+                            size: c.maxWidth,
+                          ),
                         ),
                       ),
-                      onChanged: (_) {
-                        setDialogState(() {
-                          errorText = null;
-                        });
-                      },
-                      onSubmitted: (_) {
-                        final username =
-                            controller.text.trim();
-
-                        if (RegExp(
-                          r'^[a-zA-Z0-9_]{3,20}$',
-                        ).hasMatch(username)) {
-                          Navigator.of(dialogContext)
-                              .pop(username);
-                        } else {
-                          setDialogState(() {
-                            errorText =
-                                'Use 3–20 letters, numbers, '
-                                'or underscores.';
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'You can use letters, numbers, '
-                      'and underscores.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
-                actionsAlignment:
-                    MainAxisAlignment.center,
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(dialogContext).pop();
-                    },
-                    child: const Text('CANCEL'),
-                  ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          const Color(0xFF811252),
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () {
-                      final username =
-                          controller.text.trim();
+              ],
+            ),
+          ),
+        );
+      },
+    );
 
-                      if (!RegExp(
-                        r'^[a-zA-Z0-9_]{3,20}$',
-                      ).hasMatch(username)) {
-                        setDialogState(() {
-                          errorText =
-                              'Use 3–20 letters, numbers, '
-                              'or underscores.';
-                        });
-                        return;
-                      }
-
-                      Navigator.of(dialogContext)
-                          .pop(username);
-                    },
-                    child: const Text('SAVE USERNAME'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      controller.dispose();
+    if (picked != null && mounted) {
+      setState(() => _avatarIndex = picked);
     }
   }
 
-
-  // GUEST MODE
-  // Sign out existing accounts so guest gameplay does not use
-  // an already-authenticated Firebase account.
-  Future<void> _playAsGuest() async {
+  // SAVE PROFILE AND CONTINUE
+  // Save locally first, then sync to Firebase when possible.
+  // A Firebase/network failure must not block offline gameplay.
+  Future<void> _createPlayer() async {
     if (_isLoading) return;
 
-    setState(() => _isLoading = true);
+    FocusScope.of(context).unfocus();
+
+    final username = _nameController.text.trim();
+
+    if (!_isNameValid) {
+      setState(() {
+        _errorText =
+            'Use 3–20 letters, numbers, or underscores.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
+
+    var savedToCloud = false;
 
     try {
-      await FirebaseAuth.instance.signOut();
+      // Save locally first. This works without internet.
+      final prefs = await SharedPreferences.getInstance();
 
-      // These sign-outs are best-effort. Guest play should still
-      // work even if a provider SDK cannot sign out.
-      try {
-        await GoogleSignIn.instance.signOut();
-      } catch (e) {
-        debugPrint('Google sign-out notice: $e');
-      }
+      await prefs.setString('player_username', username);
+      await prefs.setInt('player_avatar', _avatarIndex);
 
+      // Best-effort cloud save.
+      // First-time anonymous sign-in requires internet.
       try {
-        await FacebookAuth.instance.logOut();
+        var user = FirebaseAuth.instance.currentUser;
+
+        if (user == null) {
+          final credential = await FirebaseAuth.instance
+              .signInAnonymously()
+              .timeout(const Duration(seconds: 5));
+
+          user = credential.user;
+        }
+
+        if (user != null) {
+          try {
+            await user
+                .updateDisplayName(username)
+                .timeout(const Duration(seconds: 4));
+          } catch (e) {
+            debugPrint(
+              'Could not update Firebase display name: $e',
+            );
+          }
+
+          final doc = FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid);
+
+          await doc.set({
+            'uid': user.uid,
+            'username': username,
+            'displayName': username,
+            'avatar': _avatarIndex,
+            'provider': 'anonymous',
+            'updatedAt': FieldValue.serverTimestamp(),
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true)).timeout(
+            const Duration(seconds: 5),
+          );
+
+          savedToCloud = true;
+        }
       } catch (e) {
-        debugPrint('Facebook logout notice: $e');
+        // Keep going: the local profile has already been saved.
+        debugPrint('Firebase sync deferred until online: $e');
       }
 
       if (!mounted) return;
+
+      _showMessage(
+        savedToCloud
+            ? 'Profile saved to Firebase!'
+            : 'Profile saved on this device. Cloud sync needs internet.',
+      );
 
       Navigator.pushReplacement(
         context,
@@ -233,338 +363,11 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
       );
     } catch (e) {
-      debugPrint('Guest mode error: $e');
-      _showMessage('Could not start guest mode. Please try again.');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  // SAVE USER PROFILE
-  Future<void> _saveUserProfile(
-    User user, {
-    String? name,
-    String? provider,
-  }) async {
-    final doc = FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid);
-
-    final existing = await doc.get();
-
-    final enteredName = name?.trim();
-    final profileName =
-        enteredName != null && enteredName.isNotEmpty
-            ? enteredName
-            : user.displayName;
-
-    final data = <String, dynamic>{
-      'uid': user.uid,
-      'email': user.email,
-      'displayName': profileName,
-      'username': profileName,
-      'photoUrl': user.photoURL,
-      'updatedAt': FieldValue.serverTimestamp(),
-    };
-
-    if (provider != null) {
-      data['provider'] = provider;
-    }
-
-    if (!existing.exists) {
-      data['createdAt'] = FieldValue.serverTimestamp();
-    }
-
-    await doc.set(data, SetOptions(merge: true));
-  }
-
-  // FINISH SIGN-IN
-  
-  Future<void> _finishSignIn(
-    UserCredential credential, {
-    String? name,
-    String? provider,
-  }) async {
-    final user = credential.user;
-
-    if (user == null) {
-      throw Exception('Authentication returned no user.');
-    }
-
-    String? selectedUsername = name?.trim();
-
-    // Ask for an in-game username after every Google
-    // or Facebook sign-in.
-    if (provider == 'google' ||
-        provider == 'facebook') {
-      selectedUsername = await _askForUsername();
-
-      // If the player cancels, return to the login screen.
-      if (selectedUsername == null) {
-        await FirebaseAuth.instance.signOut();
-
-        try {
-          if (provider == 'google') {
-            await GoogleSignIn.instance.signOut();
-          } else {
-            await FacebookAuth.instance.logOut();
-          }
-        } catch (e) {
-          debugPrint(
-            'Social sign-out after cancellation: $e',
-          );
-        }
-
-        if (mounted) {
-          _showMessage(
-            'Sign-in cancelled. Choose a username to continue.',
-          );
-        }
-        return;
-      }
-
-      // Set the Firebase display name to the chosen username.
-      await user.updateDisplayName(selectedUsername);
-      await user.reload();
-    }
-
-    await _saveUserProfile(
-      user,
-      name: selectedUsername,
-      provider: provider,
-    );
-
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const LevelSelectScreen(),
-      ),
-    );
-  }
-
-  // EMAIL REGISTRATION AND LOGIN
-  Future<void> _emailAuthentication() async {
-    if (_isLoading) return;
-    if (!_formKey.currentState!.validate()) return;
-
-    FocusScope.of(context).unfocus();
-
-    setState(() => _isLoading = true);
-
-    try {
-      final email = _emailController.text.trim();
-      final password = _passwordController.text;
-
-      if (_isRegistering) {
-        final credential = await FirebaseAuth.instance
-            .createUserWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
-
-        final name = _nameController.text.trim();
-
-        if (name.isNotEmpty) {
-          await credential.user?.updateDisplayName(name);
-          await credential.user?.reload();
-        }
-
-        await _finishSignIn(
-          credential,
-          name: name,
-          provider: 'password',
-        );
-      } else {
-        final credential = await FirebaseAuth.instance
-            .signInWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
-
-        await _finishSignIn(
-          credential,
-          provider: 'password',
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      _showMessage(_authErrorMessage(e.code));
-    } catch (e) {
-      debugPrint('Email authentication error: $e');
-      _showMessage(
-        'Unable to complete authentication. Please try again.',
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  String _authErrorMessage(String code) {
-    switch (code) {
-      case 'email-already-in-use':
-        return 'This email already has an account. Try logging in.';
-      case 'invalid-email':
-        return 'Please enter a valid email address.';
-      case 'weak-password':
-        return 'Choose a stronger password.';
-      case 'user-not-found':
-      case 'wrong-password':
-      case 'invalid-credential':
-        return 'Incorrect email or password.';
-      case 'user-disabled':
-        return 'This account has been disabled.';
-      case 'network-request-failed':
-        return 'Network error. Check your internet connection.';
-      case 'too-many-requests':
-        return 'Too many attempts. Please try again later.';
-      case 'operation-not-allowed':
-        return 'This sign-in method is not enabled in Firebase.';
-      case 'account-exists-with-different-credential':
-        return 'This email uses another sign-in method.';
-      default:
-        return 'Authentication failed: $code';
-    }
-  }
-
-  // GOOGLE SIGN-IN
-  Future<void> _googleSignIn() async {
-    if (!_googleReady || _isLoading) return;
-
-    setState(() => _isLoading = true);
-
-    try {
-      final googleUser =
-          await GoogleSignIn.instance.authenticate();
-
-      final googleAuth = googleUser.authentication;
-      final idToken = googleAuth.idToken;
-
-      if (idToken == null) {
-        throw Exception(
-          'Google did not return an ID token. '
-          'Check Firebase and Google configuration.',
-        );
-      }
-
-      final credential = GoogleAuthProvider.credential(
-        idToken: idToken,
-      );
-
-      final userCredential =
-          await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
-
-      await _finishSignIn(
-        userCredential,
-        provider: 'google',
-      );
-    } on FirebaseAuthException catch (e) {
-      _showMessage(_authErrorMessage(e.code));
-    } catch (e, stackTrace) {
-      debugPrint('Google Sign-In error: $e');
-      debugPrintStack(stackTrace: stackTrace);
-
-      _showMessage('Google Sign-In failed: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  // FACEBOOK SIGN-IN
-  Future<void> _facebookSignIn() async {
-    if (_isLoading) return;
-
-    setState(() => _isLoading = true);
-
-    try {
-      final result = await FacebookAuth.instance.login();
-
-      if (result.status == LoginStatus.cancelled) {
-        _showMessage('Facebook Sign-In was cancelled.');
-        return;
-      }
-
-      if (result.status != LoginStatus.success ||
-          result.accessToken == null) {
-        debugPrint(
-          'Facebook login status: ${result.status}; '
-          'message: ${result.message}',
-        );
-
-        _showMessage(
-          result.message ??
-              'Facebook login was unsuccessful. '
-              'Check your Facebook configuration.',
-        );
-        return;
-      }
-
-      final credential = FacebookAuthProvider.credential(
-        result.accessToken!.tokenString,
-      );
-
-      final userCredential =
-          await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
-
-      await _finishSignIn(
-        userCredential,
-        provider: 'facebook',
-      );
-    } on FirebaseAuthException catch (e) {
-      debugPrint(
-        'Facebook FirebaseAuth error: ${e.code} - ${e.message}',
-      );
-      _showMessage(_authErrorMessage(e.code));
-    } catch (e, stackTrace) {
-      debugPrint('Facebook Sign-In error: $e');
-      debugPrintStack(stackTrace: stackTrace);
-
-      _showMessage('Facebook Sign-In failed: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  // PASSWORD RESET
-  Future<void> _resetPassword() async {
-    if (_isLoading) return;
-
-    final email = _emailController.text.trim();
-
-    if (email.isEmpty ||
-        !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-            .hasMatch(email)) {
-      _showMessage('Enter your email address first.');
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(
-        email: email,
-      );
+      debugPrint('Could not save local player profile: $e');
 
       _showMessage(
-        'If an account exists for that email, a reset link will be sent.',
+        'Could not save your profile on this device. Please try again.',
       );
-    } on FirebaseAuthException catch (e) {
-      _showMessage(_authErrorMessage(e.code));
-    } catch (e) {
-      debugPrint('Password reset error: $e');
-      _showMessage('Could not send the reset email.');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -572,87 +375,10 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // INPUT STYLING
-  InputDecoration _inputDecoration({
-    required String label,
-    required IconData icon,
-    Widget? suffixIcon,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(
-        icon,
-        color: const Color(0xFF811252),
-      ),
-      suffixIcon: suffixIcon,
-      filled: true,
-      fillColor: Colors.white,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: Colors.purple.shade100,
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(
-          color: Color(0xFF811252),
-          width: 2,
-        ),
-      ),
-    );
-  }
-
-  // REUSABLE SOCIAL BUTTON
-  Widget _socialButton({
-    required String text,
-    required Widget leading,
-    required VoidCallback? onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: OutlinedButton(
-        onPressed: _isLoading ? null : onPressed,
-        style: OutlinedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xFF351039),
-          side: BorderSide(
-            color: Colors.purple.shade100,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            leading,
-            const SizedBox(width: 12),
-            Flexible(
-              child: Text(
-                text,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // SCREEN UI
+  // BUILD
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F1FA),
       body: Container(
         width: double.infinity,
         height: double.infinity,
@@ -672,365 +398,374 @@ class _AuthScreenState extends State<AuthScreen> {
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(22),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 440,
-                ),
-                child: Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBFF),
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 25,
-                        offset: Offset(0, 12),
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // TITLE BADGE
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 8,
                       ),
-                    ],
-                  ),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.stretch,
-                      children: [
-                        const Center(
-                          child: Text(
-                            '🧠',
-                            style: TextStyle(fontSize: 58),
-                          ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(
+                          color: const Color(0xFFFFD700),
+                          width: 2,
                         ),
-                        const SizedBox(height: 8),
-
-                        const Text(
-                          'Welcome to MindBoost!',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 25,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF4A0E4E),
-                          ),
+                      ),
+                      child: const Text(
+                        'NEW PLAYER',
+                        style: TextStyle(
+                          color: Color(0xFFFFD700),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2,
                         ),
+                      ),
+                    ),
 
-                        const SizedBox(height: 8),
+                    const SizedBox(height: 22),
 
-                        Text(
-                          _isRegistering
-                              ? 'Create your player account'
-                              : 'Sign in to continue your adventure',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.purple.shade700,
+                    // CARD
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBFF),
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 25,
+                            offset: Offset(0, 12),
                           ),
-                        ),
-
-                        const SizedBox(height: 28),
-
-                        if (_isRegistering) ...[
-                          TextFormField(
-                            controller: _nameController,
-                            textCapitalization:
-                                TextCapitalization.words,
-                            decoration: _inputDecoration(
-                              label: 'Player name',
-                              icon: Icons.person_outline,
-                            ),
-                            validator: (value) {
-                              if (_isRegistering &&
-                                  (value == null ||
-                                      value.trim().isEmpty)) {
-                                return 'Enter your player name.';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
                         ],
-
-                        TextFormField(
-                          controller: _emailController,
-                          keyboardType:
-                              TextInputType.emailAddress,
-                          autofillHints: const [
-                            AutofillHints.email,
-                          ],
-                          decoration: _inputDecoration(
-                            label: 'Email address',
-                            icon: Icons.email_outlined,
-                          ),
-                          validator: (value) {
-                            if (value == null ||
-                                !RegExp(
-                                  r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
-                                ).hasMatch(value.trim())) {
-                              return 'Enter a valid email address.';
-                            }
-                            return null;
-                          },
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        TextFormField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          autofillHints: _isRegistering
-                              ? const [
-                                  AutofillHints.newPassword,
-                                ]
-                              : const [
-                                  AutofillHints.password,
-                                ],
-                          decoration: _inputDecoration(
-                            label: 'Password',
-                            icon: Icons.lock_outline,
-                            suffixIcon: IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword =
-                                      !_obscurePassword;
-                                });
-                              },
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                              ),
-                            ),
-                          ),
-                          validator: (value) {
-                            if (value == null ||
-                                value.isEmpty) {
-                              return 'Enter your password.';
-                            }
-
-                            if (_isRegistering &&
-                                value.length < 6) {
-                              return 'Use at least 6 characters.';
-                            }
-
-                            return null;
-                          },
-                        ),
-
-                        if (!_isRegistering)
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed:
-                                  _isLoading ? null : _resetPassword,
-                              child: const Text(
-                                'Forgot password?',
-                                style: TextStyle(
-                                  color: Color(0xFF811252),
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-
-                        const SizedBox(height: 8),
-
-                        SizedBox(
-                          height: 54,
-                          child: ElevatedButton(
-                            onPressed: _isLoading
-                                ? null
-                                : _emailAuthentication,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor:
-                                  const Color(0xFF811252),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(16),
-                              ),
-                            ),
-                            child: _isLoading
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child:
-                                        CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Text(
-                                    _isRegistering
-                                        ? 'CREATE ACCOUNT'
-                                        : 'LOG IN',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 1,
-                                    ),
-                                  ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        TextButton(
-                          onPressed: _isLoading
-                              ? null
-                              : () {
-                                  setState(() {
-                                    _isRegistering =
-                                        !_isRegistering;
-                                  });
-                                },
-                          child: Text(
-                            _isRegistering
-                                ? 'Already have an account? Log in'
-                                : 'New player? Create an account',
+                      ),
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.stretch,
+                        children: [
+                          const Text(
+                            'Create your profile',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Color(0xFF811252),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Divider(
-                                color: Colors.purple.shade100,
-                              ),
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Text(
-                                'OR CONTINUE WITH',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Divider(
-                                color: Colors.purple.shade100,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 18),
-
-                        // GOOGLE SIGN-IN
-                        _socialButton(
-                          text: _googleReady
-                              ? 'Continue with Google'
-                              : 'Initializing Google...',
-                          leading: const Text(
-                            'G',
                             style: TextStyle(
-                              color: Color(0xFF4285F4),
                               fontSize: 25,
                               fontWeight: FontWeight.w900,
+                              color: Color(0xFF4A0E4E),
                             ),
                           ),
-                          onPressed:
-                              _googleReady ? _googleSignIn : null,
-                        ),
+                          const SizedBox(height: 6),
+                          const SizedBox(height: 24),
 
-                        const SizedBox(height: 12),
-
-                        // FACEBOOK SIGN-IN
-                        _socialButton(
-                          text: 'Continue with Facebook',
-                          leading: const Icon(
-                            Icons.facebook,
-                            color: Color(0xFF1877F2),
-                            size: 28,
-                          ),
-                          onPressed: _facebookSignIn,
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        // GUEST MODE
-                        OutlinedButton.icon(
-                          onPressed:
-                              _isLoading ? null : _playAsGuest,
-                          icon: const Icon(
-                            Icons.person_outline_rounded,
-                          ),
-                          label: const Text(
-                            'PLAY AS GUEST',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1,
+                          // AVATAR WITH EDIT BADGE
+                          Center(
+                            child: GestureDetector(
+                              onTap: _isLoading ? null : _pickAvatar,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.white,
+                                      border: Border.all(
+                                        color: const Color(0xFFFFD700),
+                                        width: 4,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: const Color(0xFFFF8008)
+                                              .withOpacity(0.5),
+                                          blurRadius: 20,
+                                          spreadRadius: 2,
+                                        ),
+                                        const BoxShadow(
+                                          color: Colors.black26,
+                                          offset: Offset(0, 6),
+                                          blurRadius: 8,
+                                        ),
+                                      ],
+                                    ),
+                                    child: PlayerAvatar(
+                                      index: _avatarIndex,
+                                      size: 110,
+                                    ),
+                                  ),
+                                  Positioned(
+                                    right: -2,
+                                    bottom: -2,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFF4081),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white,
+                                          width: 2,
+                                        ),
+                                        boxShadow: const [
+                                          BoxShadow(
+                                            color: Color(0xFF990033),
+                                            offset: Offset(0, 3),
+                                          ),
+                                        ],
+                                      ),
+                                      child: const Icon(
+                                        Icons.edit_rounded,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor:
-                                const Color(0xFF811252),
-                            minimumSize:
-                                const Size(double.infinity, 52),
-                            side: const BorderSide(
-                              color: Color(0xFF811252),
-                              width: 1.5,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(16),
-                            ),
-                          ),
-                        ),
 
-                        const SizedBox(height: 8),
-
-                        const Text(
-                          'Guest progress and achievements '
-                          'will not be saved.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
-                          ),
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        TextButton.icon(
-                          onPressed: _isLoading
-                              ? null
-                              : () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back),
-                          label: const Text(
-                            'Back to welcome screen',
-                          ),
-                          style: TextButton.styleFrom(
-                            foregroundColor:
-                                const Color(0xFF811252),
-                          ),
-                        ),
-
-                        if (_isLoading) ...[
                           const SizedBox(height: 8),
-                          const Text(
-                            'Connecting to MindBoost...',
+                          Text(
+                            'Tap to change avatar',
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              color: Colors.grey,
+                              color: Colors.grey.shade600,
                               fontSize: 12,
                             ),
                           ),
+
+                          const SizedBox(height: 22),
+
+                          // USERNAME FIELD
+                          TextField(
+                            controller: _nameController,
+                            maxLength: 20,
+                            enabled: !_isLoading,
+                            textCapitalization:
+                                TextCapitalization.none,
+                            onChanged: (_) {
+                              setState(() => _errorText = null);
+                            },
+                            onSubmitted: (_) => _createPlayer(),
+                            decoration: InputDecoration(
+                              labelText: 'Player name',
+                              hintText: 'e.g. BrainMaster',
+                              errorText: _errorText,
+                              counterText: '',
+                              prefixIcon: const Icon(
+                                Icons.person_outline,
+                                color: Color(0xFF811252),
+                              ),
+                              suffixIcon: _isNameValid
+                                  ? const Icon(
+                                      Icons.check_circle_rounded,
+                                      color: Color(0xFF2E9E5B),
+                                    )
+                                  : null,
+                              filled: true,
+                              fillColor: Colors.white,
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: Colors.purple.shade100,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(16),
+                                borderSide: const BorderSide(
+                                  color: Color(0xFF811252),
+                                  width: 2,
+                                ),
+                              ),
+                              errorBorder: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(16),
+                                borderSide: const BorderSide(
+                                  color: Colors.redAccent,
+                                  width: 1.5,
+                                ),
+                              ),
+                              focusedErrorBorder: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(16),
+                                borderSide: const BorderSide(
+                                  color: Colors.redAccent,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 4),
+
+                          // RANDOM BUTTON
+                          _GameButton(
+                            text: 'RANDOM NAME',
+                            icon: Icons.casino_rounded,
+                            buttonColor: const Color(0xFF00A6FF),
+                            shadowColor: const Color(0xFF0052B4),
+                            textColor: Colors.white,
+                            height: 50,
+                            fontSize: 15,
+                            onPressed: _isLoading
+                                ? null
+                                : _generateRandomName,
+                          ),
+
+                          const SizedBox(height: 22),
+
+                          // CREATE BUTTON
+                          _GameButton(
+                            text: _isLoading
+                                ? 'SAVING...'
+                                : 'LET\'S PLAY!',
+                            icon: Icons.play_arrow_rounded,
+                            buttonColor: const Color(0xFF38EF7D),
+                            shadowColor: const Color(0xFF0C6B63),
+                            textColor: const Color(0xFF003816),
+                            height: 58,
+                            fontSize: 19,
+                            loading: _isLoading,
+                            onPressed:
+                                _isLoading ? null : _createPlayer,
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          TextButton.icon(
+                            onPressed: _isLoading
+                                ? null
+                                : () => Navigator.pop(context),
+                            icon: const Icon(Icons.arrow_back),
+                            label: const Text('Back'),
+                            style: TextButton.styleFrom(
+                              foregroundColor:
+                                  const Color(0xFF811252),
+                            ),
+                          ),
                         ],
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Same 3D press-down button style used on your home screen.
+class _GameButton extends StatefulWidget {
+  final String text;
+  final IconData icon;
+  final Color buttonColor;
+  final Color shadowColor;
+  final Color textColor;
+  final double height;
+  final double fontSize;
+  final bool loading;
+  final VoidCallback? onPressed;
+
+  const _GameButton({
+    required this.text,
+    required this.icon,
+    required this.buttonColor,
+    required this.shadowColor,
+    required this.textColor,
+    required this.height,
+    required this.fontSize,
+    required this.onPressed,
+    this.loading = false,
+  });
+
+  @override
+  State<_GameButton> createState() => _GameButtonState();
+}
+
+class _GameButtonState extends State<_GameButton> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPressed != null;
+
+    return Opacity(
+      opacity: enabled || widget.loading ? 1 : 0.6,
+      child: GestureDetector(
+        onTapDown: enabled
+            ? (_) => setState(() => _isPressed = true)
+            : null,
+        onTapUp: enabled
+            ? (_) {
+                setState(() => _isPressed = false);
+                widget.onPressed!();
+              }
+            : null,
+        onTapCancel: () => setState(() => _isPressed = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          height: widget.height,
+          margin: const EdgeInsets.only(top: 6, bottom: 8),
+          transform: Matrix4.translationValues(
+            0,
+            _isPressed ? 5 : 0,
+            0,
+          ),
+          decoration: BoxDecoration(
+            color: widget.buttonColor,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.8),
+              width: 2.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: widget.shadowColor,
+                offset: Offset(0, _isPressed ? 1 : 6),
+                blurRadius: 0,
+              ),
+              const BoxShadow(
+                color: Colors.black26,
+                offset: Offset(0, 8),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (widget.loading)
+                SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: widget.textColor,
+                  ),
+                )
+              else
+                Icon(
+                  widget.icon,
+                  color: widget.textColor,
+                  size: 26,
+                ),
+              const SizedBox(width: 8),
+              Text(
+                widget.text,
+                style: TextStyle(
+                  color: widget.textColor,
+                  fontSize: widget.fontSize,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
           ),
         ),
       ),

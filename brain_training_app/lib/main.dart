@@ -6,6 +6,7 @@ import 'firebase_options.dart';
 import 'screens/level_select_screen.dart';
 import 'screens/auth_screen.dart';
 import 'services/menu_music.dart';
+import 'widgets/menu_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -88,7 +89,15 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: Column(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
+                  ),
+                  child: IntrinsicHeight(
+                    child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               // TOP TITLE BADGE
@@ -248,7 +257,7 @@ class HomeScreen extends StatelessWidget {
                       onPressed: () => _startGame(context),
                     ),
 
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 14),
 
                     _3DGameButton(
                       text: 'LEADERBOARD',
@@ -274,10 +283,26 @@ class HomeScreen extends StatelessWidget {
                         );
                       },
                     ),
+
+                    const SizedBox(height: 14),
+
+                    _3DGameButton(
+                      text: 'OPTIONS',
+                      icon: Icons.settings_rounded,
+                      buttonColor: const Color(0xFF00A6FF),
+                      shadowColor: const Color(0xFF0052B4),
+                      textColor: Colors.white,
+                      onPressed: () => showMenuOptions(context),
+                    ),
                   ],
                 ),
               ),
             ],
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),

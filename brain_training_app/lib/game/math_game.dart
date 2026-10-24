@@ -1050,7 +1050,7 @@ class _MathGameState extends State<MathGame> {
                       const SizedBox(height: 30),
 
                       _buildOptionsButton(
-                        text: '← BACK TO PAUSE MENU',
+                        text: '← Back',
                         color: const Color(0xFFFFD700),
                         shadowColor: const Color(0xFFB8860B),
                         textColor: const Color(0xFF3B0B46),

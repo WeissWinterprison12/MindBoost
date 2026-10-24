@@ -51,6 +51,12 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   bool completed = false;
   bool gameEnded = false;
   bool isPaused = false;
+  bool showOptions = false;
+
+  // Match MathGame: both audio settings start at 50%.
+  double musicVolume = 0.5;
+  double soundVolume = 0.5;
+  bool _musicStoppedForMute = false;
 
   int xp = 0;
   int score = 0;
@@ -59,7 +65,10 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   Timer? timer;
 
   late ConfettiController confetti;
+
+  // Separate players let the background music continue while effects play.
   final AudioPlayer player = AudioPlayer();
+  final AudioPlayer _musicPlayer = AudioPlayer();
 
   late AnimationController _shakeController;
   late Animation<double> _shakeAnimation;
@@ -92,6 +101,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         )
         .animate(_shakeController);
 
+    _initAudio();
     startNewGame();
   }
 
@@ -99,15 +109,111 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   // AUDIO
   // ============================================================
 
+  Future<void> _initAudio() async {
+    await _configureAudio();
+    await _startBackgroundMusic();
+  }
+
+  Future<void> _configureAudio() async {
+    final AudioContext audioContext = AudioContext(
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.mixWithOthers},
+      ),
+      android: AudioContextAndroid(
+        audioFocus: AndroidAudioFocus.none,
+      ),
+    );
+
+    try {
+      await _musicPlayer.setAudioContext(audioContext);
+      await player.setAudioContext(audioContext);
+      await player.setVolume(soundVolume);
+    } catch (error) {
+      debugPrint('Could not configure audio mixing: $error');
+    }
+  }
+
+  Future<void> _startBackgroundMusic() async {
+    if (musicVolume <= 0.0) {
+      _musicStoppedForMute = true;
+      try {
+        await _musicPlayer.stop();
+      } catch (error) {
+        debugPrint('Could not stop muted music: $error');
+      }
+      return;
+    }
+
+    if (!mounted || isPaused || completed || gameEnded) return;
+
+    try {
+      await _musicPlayer.stop();
+      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
+      await _musicPlayer.setVolume(musicVolume);
+      await _musicPlayer.play(
+        AssetSource('sounds/The_Measured_Proof.mp3'),
+        volume: musicVolume,
+      );
+      _musicStoppedForMute = false;
+    } catch (error) {
+      debugPrint('Could not play background music: $error');
+    }
+  }
+
   Future<void> _playSound(String assetName) async {
+    if (soundVolume <= 0.0) return;
+
     try {
       await player.stop();
+      await player.setVolume(soundVolume);
       await player.play(
         AssetSource(assetName),
+        volume: soundVolume,
       );
     } catch (e) {
       debugPrint('Audio error: $e');
     }
+  }
+
+  Future<void> changeMusicVolume(double value) async {
+    final double volume = value.clamp(0.0, 1.0).toDouble();
+    if (!mounted) return;
+
+    setState(() => musicVolume = volume);
+
+    try {
+      if (volume <= 0.0) {
+        _musicStoppedForMute = true;
+        await _musicPlayer.stop();
+      } else if (_musicStoppedForMute) {
+        if (!isPaused && !completed && !gameEnded) {
+          await _startBackgroundMusic();
+        }
+      } else {
+        await _musicPlayer.setVolume(volume);
+      }
+    } catch (error) {
+      debugPrint('Could not change music volume: $error');
+    }
+  }
+
+  Future<void> changeSoundVolume(double value) async {
+    final double volume = value.clamp(0.0, 1.0).toDouble();
+    if (!mounted) return;
+
+    setState(() => soundVolume = volume);
+
+    try {
+      await player.setVolume(volume);
+    } catch (error) {
+      debugPrint('Could not change sound volume: $error');
+    }
+  }
+
+  void showGameOptions() {
+    if (!mounted) return;
+    setState(() => showOptions = true);
   }
 
   // ============================================================
@@ -153,6 +259,8 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     setState(() {
       startNewGame();
     });
+
+    _startBackgroundMusic();
   }
 
   // ============================================================
@@ -165,20 +273,34 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     timer?.cancel();
 
     player.pause();
+    _musicPlayer.pause();
 
     setState(() {
       isPaused = true;
+      showOptions = false;
     });
   }
 
-  void resumeGame() {
+  Future<void> resumeGame() async {
     if (!isPaused || completed || gameEnded) return;
 
     setState(() {
       isPaused = false;
+      showOptions = false;
     });
 
-    player.resume();
+    if (musicVolume <= 0.0) {
+      _musicStoppedForMute = true;
+      await _musicPlayer.stop();
+    } else if (_musicStoppedForMute) {
+      await _startBackgroundMusic();
+    } else {
+      await _musicPlayer.setVolume(musicVolume);
+      await _musicPlayer.resume();
+    }
+
+    await player.setVolume(soundVolume);
+    await player.resume();
 
     if (memorizing) {
       startMemory();
@@ -400,6 +522,8 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     gameEnded = true;
 
     timer?.cancel();
+
+    _musicPlayer.stop();
 
     if (win) {
       calculateResults();
@@ -1268,6 +1392,167 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   }
 
   // ============================================================
+  // OPTIONS SCREEN (matches MathGame)
+  // ============================================================
+
+  Widget _buildOptionsScreen() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF4A0E4E),
+              Color(0xFF811252),
+              Color(0xFF2E0854),
+            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(22),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3B0B46).withOpacity(0.96),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: const Color(0xFFFFD700),
+                      width: 3,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black45,
+                        blurRadius: 18,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '⚙️ OPTIONS',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFFFD700),
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Adjust your game audio',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      _buildOptionsVolumeSlider(
+                        title: '🎵 Background Music',
+                        value: musicVolume,
+                        onChanged: changeMusicVolume,
+                      ),
+                      const SizedBox(height: 22),
+                      _buildOptionsVolumeSlider(
+                        title: '🔊 Sound Effects',
+                        value: soundVolume,
+                        onChanged: changeSoundVolume,
+                      ),
+                      const SizedBox(height: 30),
+                      _buildChunkyButton(
+                        label: '← Back',
+                        icon: Icons.arrow_back_rounded,
+                        color: const Color(0xFFFFD700),
+                        onPressed: () {
+                          setState(() => showOptions = false);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionsVolumeSlider({
+    required String title,
+    required double value,
+    required ValueChanged<double> onChanged,
+  }) {
+    final int percentage = (value * 100).round();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFFFD700).withOpacity(0.65),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Text(
+                '$percentage%',
+                style: const TextStyle(
+                  color: Color(0xFFFFD700),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 17,
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: const Color(0xFFFFD700),
+              inactiveTrackColor: Colors.white24,
+              thumbColor: Colors.white,
+              overlayColor: const Color(0xFFFFD700).withOpacity(0.18),
+              trackHeight: 6,
+            ),
+            child: Slider(
+              value: value.clamp(0.0, 1.0),
+              min: 0.0,
+              max: 1.0,
+              divisions: 100,
+              label: '$percentage%',
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
   // BUILD
   // ============================================================
 
@@ -1328,15 +1613,14 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
             if (isPaused)
               Positioned.fill(
-                child: PauseMenu(
-                  onResume:
-                      resumeGame,
-                  onRestart:
-                      restartGame,
-                  onOptions: () {},
-                  onMainMenu:
-                      goToMainMenu,
-                ),
+                child: showOptions
+                    ? _buildOptionsScreen()
+                    : PauseMenu(
+                        onResume: resumeGame,
+                        onRestart: restartGame,
+                        onOptions: showGameOptions,
+                        onMainMenu: goToMainMenu,
+                      ),
               ),
 
             // ==================================================
@@ -1381,6 +1665,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     confetti.dispose();
 
     player.dispose();
+    _musicPlayer.dispose();
 
     _shakeController.dispose();
 

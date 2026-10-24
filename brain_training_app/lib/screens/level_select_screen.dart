@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_screen.dart';
+import '../widgets/player_avatar.dart';
 
 import '../game/math_game.dart';
 import '../game/science_puzzle.dart';
@@ -16,6 +16,7 @@ import '../game/path_finder.dart';
 import '../game/word_quest.dart';
 import '../services/menu_music.dart';
 import '../widgets/game_loading_screen.dart';
+import '../widgets/menu_options.dart';
 
 class LevelSelectScreen extends StatefulWidget {
   const LevelSelectScreen({super.key});
@@ -189,6 +190,18 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                     ),
 
                     const SizedBox(width: 12),
+
+                    // OPTIONS (music volume)
+                    _build3DButton(
+                      onTap: () => showMenuOptions(context),
+                      child: const Icon(
+                        Icons.settings_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                    ),
+
+                    const SizedBox(width: 8),
 
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -443,35 +456,41 @@ class PlayerProfileButton extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      return _buildProfile(
-        context,
-        username: 'Guest Player',
-        photoUrl: null,
-        user: null,
+      // Offline / first launch: display the locally saved player profile.
+      return FutureBuilder<SharedPreferences>(
+        future: SharedPreferences.getInstance(),
+        builder: (context, snapshot) {
+          final prefs = snapshot.data;
+          final savedName = prefs?.getString('player_username');
+          final savedAvatar = prefs?.getInt('player_avatar') ?? 0;
+
+          return _buildProfile(
+            context,
+            username: (savedName != null && savedName.trim().isNotEmpty)
+                ? savedName.trim()
+                : 'Guest Player',
+            avatar: savedAvatar.clamp(0, kAvatarCount - 1),
+            user: null,
+          );
+        },
       );
     }
 
-    return StreamBuilder<
-        DocumentSnapshot<Map<String, dynamic>>>(
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .snapshots(),
       builder: (context, snapshot) {
         final data = snapshot.data?.data();
-
         final username = _getUsername(user, data);
-
-        final savedPhoto = data?['photoUrl'];
-
-        final photoUrl =
-            user.photoURL ??
-            (savedPhoto is String ? savedPhoto : null);
+        final avatarRaw = data?['avatar'];
+        final avatar = avatarRaw is int ? avatarRaw : 0;
 
         return _buildProfile(
           context,
           username: username,
-          photoUrl: photoUrl,
+          avatar: avatar,
           user: user,
         );
       },
@@ -481,7 +500,7 @@ class PlayerProfileButton extends StatelessWidget {
   Widget _buildProfile(
     BuildContext context, {
     required String username,
-    required String? photoUrl,
+    required int avatar,
     required User? user,
   }) {
     return Tooltip(
@@ -493,7 +512,7 @@ class PlayerProfileButton extends StatelessWidget {
             context,
             user: user,
             username: username,
-            photoUrl: photoUrl,
+            avatar: avatar,
           );
         },
         child: Padding(
@@ -523,17 +542,10 @@ class PlayerProfileButton extends StatelessWidget {
                 child: CircleAvatar(
                   radius: 23,
                   backgroundColor: Colors.white,
-                  child: ClipOval(
-                    child: _profileImage(
-                      photoUrl,
-                      46,
-                    ),
-                  ),
+                  child: PlayerAvatar(index: avatar, size: 46),
                 ),
               ),
-
               const SizedBox(height: 4),
-
               ConstrainedBox(
                 constraints: const BoxConstraints(
                   maxWidth: 110,
@@ -557,38 +569,11 @@ class PlayerProfileButton extends StatelessWidget {
     );
   }
 
-  Widget _profileImage(
-    String? photoUrl,
-    double size,
-  ) {
-    if (photoUrl == null || photoUrl.isEmpty) {
-      return Icon(
-        Icons.person,
-        size: size * 0.65,
-        color: const Color(0xFF811252),
-      );
-    }
-
-    return Image.network(
-      photoUrl,
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        return Icon(
-          Icons.person,
-          size: size * 0.65,
-          color: const Color(0xFF811252),
-        );
-      },
-    );
-  }
-
   void _showAccountSettings(
     BuildContext context, {
     required User? user,
     required String username,
-    required String? photoUrl,
+    required int avatar,
   }) {
     showModalBottomSheet<void>(
       context: context,
@@ -628,12 +613,7 @@ class PlayerProfileButton extends StatelessWidget {
                 CircleAvatar(
                   radius: 38,
                   backgroundColor: const Color(0xFFF1DDF4),
-                  child: ClipOval(
-                    child: _profileImage(
-                      photoUrl,
-                      76,
-                    ),
-                  ),
+                  child: PlayerAvatar(index: avatar, size: 76),
                 ),
 
                 const SizedBox(height: 12),
@@ -663,7 +643,9 @@ class PlayerProfileButton extends StatelessWidget {
                 const SizedBox(height: 5),
 
                 Text(
-                  user?.email ?? 'Playing as a guest',
+                  user == null
+                      ? 'Playing as a guest'
+                      : 'Your player profile and progress',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.grey.shade700,
@@ -701,17 +683,13 @@ class PlayerProfileButton extends StatelessWidget {
 
                 const SizedBox(height: 16),
 
-                // SIGN OUT
+                // EDIT PROFILE
                 SizedBox(
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton.icon(
-                    icon: const Icon(Icons.logout_rounded),
-                    label: Text(
-                      user == null
-                          ? 'EXIT GUEST MODE'
-                          : 'SIGN OUT',
-                    ),
+                    icon: const Icon(Icons.edit_rounded),
+                    label: const Text('EDIT PROFILE'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF811252),
                       foregroundColor: Colors.white,
@@ -719,68 +697,13 @@ class PlayerProfileButton extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                       ),
                     ),
-                    onPressed: () async {
+                    onPressed: () {
                       Navigator.pop(sheetContext);
-
-                      try {
-                        final providers = user
-                                ?.providerData
-                                .map((provider) =>
-                                    provider.providerId)
-                                .toSet() ??
-                            <String>{};
-
-                        // Sign out of Firebase first.
-                        await FirebaseAuth.instance.signOut();
-
-                        // Sign out of Google if used.
-                        if (providers.contains('google.com')) {
-                          try {
-                            await GoogleSignIn.instance.signOut();
-                          } catch (e) {
-                            debugPrint(
-                              'Google sign-out notice: $e',
-                            );
-                          }
-                        }
-
-                        // Sign out of Facebook if used.
-                        if (providers.contains('facebook.com')) {
-                          try {
-                            await FacebookAuth.instance.logOut();
-                          } catch (e) {
-                            debugPrint(
-                              'Facebook logout notice: $e',
-                            );
-                          }
-                        }
-
-                        if (!context.mounted) return;
-
-                        // Return to authentication and clear
-                        // the previous navigation stack.
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(
-                            builder: (_) => const AuthScreen(),
-                          ),
-                          (route) => false,
-                        );
-                      } catch (e) {
-                        debugPrint(
-                          'Account sign-out failed: $e',
-                        );
-
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context)
-                              .showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Unable to sign out. Please try again.',
-                              ),
-                            ),
-                          );
-                        }
-                      }
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const AuthScreen(),
+                        ),
+                      );
                     },
                   ),
                 ),
