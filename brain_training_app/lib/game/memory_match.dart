@@ -182,7 +182,7 @@ class _MemoryMatchState extends State<MemoryMatch>
       await _musicPlayer.setReleaseMode(ReleaseMode.loop);
       await _musicPlayer.setVolume(musicVolume);
       await _musicPlayer.play(
-        AssetSource('sounds/The_Measured_Path.mp3'),
+        AssetSource('sounds/The_Shape_of_Thought.mp3'),
         volume: musicVolume,
       );
       _musicStoppedForMute = false;

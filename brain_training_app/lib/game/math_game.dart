@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/audio_settings.dart';
 import '../widgets/pause_menu.dart';
 
 class MathGame extends StatefulWidget {
@@ -23,8 +24,7 @@ class _MathGameState extends State<MathGame> {
   late ConfettiController confettiController;
   Timer? questionTimer;
 
-  // One player per sound effect. Each one is loaded in advance, so the
-  // sound starts the instant it is called (no loading delay).
+  // One player per sound effect.
   final AudioPlayer _correctPlayer = AudioPlayer();
   final AudioPlayer _wrongPlayer = AudioPlayer();
   final AudioPlayer _completePlayer = AudioPlayer();
@@ -35,7 +35,6 @@ class _MathGameState extends State<MathGame> {
     _completePlayer,
   ];
 
-  // True once all the sound effects have finished loading.
   bool _effectsReady = false;
 
   final AudioPlayer _musicPlayer = AudioPlayer();
@@ -59,19 +58,14 @@ class _MathGameState extends State<MathGame> {
   bool isPaused = false;
   bool showOptions = false;
 
-  // Both audio settings start at 50%.
-  double musicVolume = 0.5;
-  double soundVolume = 0.5;
+  // Default to 100%. Saved settings load for the current account.
+  double musicVolume = AudioSettings.defaultVolume;
+  double soundVolume = AudioSettings.defaultVolume;
 
-  // Tracks whether the music has been stopped because volume was 0%.
   bool _musicStoppedForMute = false;
 
-  // While a sound effect plays, the music drops to this fraction of its
-  // normal volume (0.3 = 30%) and then returns to normal.
+  // Lower music volume while a sound effect plays.
   static const double _duckLevel = 0.3;
-
-  // Used to cancel an older "restore the music volume" step when a new
-  // sound effect starts before the previous one has finished.
   int _duckToken = 0;
 
   int xp = 0;
@@ -108,18 +102,27 @@ class _MathGameState extends State<MathGame> {
   // ============================================================
 
   Future<void> _initAudio() async {
+    final settings = AudioSettings.instance;
+
+    // Load saved volume values for the signed-in account.
+    await settings.initialize();
+    await settings.loadForCurrentUser();
+
+    if (!mounted) return;
+
+    setState(() {
+      musicVolume = settings.musicVolume;
+      soundVolume = settings.soundVolume;
+    });
+
     await _configureAudio();
 
-    // Load the sound effects while the music starts.
     await Future.wait([
       _loadSoundEffects(),
       _startBackgroundMusic(),
     ]);
   }
 
-  /// Loads every sound effect ahead of time. Loading a sound only when it
-  /// is needed causes a noticeable delay, which made the wrong-answer
-  /// sound play late.
   Future<void> _loadSoundEffects() async {
     try {
       for (final AudioPlayer player in _effectPlayers) {
@@ -127,23 +130,22 @@ class _MathGameState extends State<MathGame> {
         await player.setVolume(soundVolume);
       }
 
-      await _correctPlayer.setSource(AssetSource('sounds/correct.mp3'));
-      await _wrongPlayer.setSource(AssetSource('sounds/wrong.mp3'));
-      await _completePlayer.setSource(AssetSource('sounds/level up.mp3'));
+      await _correctPlayer.setSource(
+        AssetSource('sounds/correct.mp3'),
+      );
+      await _wrongPlayer.setSource(
+        AssetSource('sounds/wrong.mp3'),
+      );
+      await _completePlayer.setSource(
+        AssetSource('sounds/level up.mp3'),
+      );
 
       _effectsReady = true;
     } catch (error) {
-      // The game still works: sounds fall back to loading when played.
       debugPrint('Could not preload sound effects: $error');
     }
   }
 
-  /// Lets the music and the sound effects play at the same time.
-  ///
-  /// By default each player takes over the phone's audio "focus", so
-  /// when a sound effect starts, the music player is stopped by the
-  /// system and never comes back. These settings make the players mix
-  /// instead of fighting for focus.
   Future<void> _configureAudio() async {
     final AudioContext audioContext = AudioContext(
       iOS: AudioContextIOS(
@@ -200,16 +202,14 @@ class _MathGameState extends State<MathGame> {
     }
   }
 
-  /// Lowers the music while a sound effect plays, then brings it back
-  /// to its normal volume when the effect finishes.
   Future<void> _duckMusic(AudioPlayer effectPlayer) async {
     if (musicVolume <= 0.0 || _musicStoppedForMute) return;
     if (isPaused || gameOver) return;
 
     final int token = ++_duckToken;
 
-    // Start listening before the effect plays so we don't miss the end.
-    final Future<void> effectFinished = effectPlayer.onPlayerComplete.first;
+    final Future<void> effectFinished =
+        effectPlayer.onPlayerComplete.first;
 
     try {
       await _musicPlayer.setVolume(musicVolume * _duckLevel);
@@ -218,7 +218,6 @@ class _MathGameState extends State<MathGame> {
     }
 
     try {
-      // Wait for the effect to finish (or give up after 3 seconds).
       await Future.any<void>([
         effectFinished,
         Future<void>.delayed(const Duration(seconds: 3)),
@@ -227,7 +226,6 @@ class _MathGameState extends State<MathGame> {
       debugPrint('Sound effect wait failed: $error');
     }
 
-    // A newer sound effect started, or the screen was closed.
     if (!mounted || token != _duckToken) return;
 
     try {
@@ -237,22 +235,19 @@ class _MathGameState extends State<MathGame> {
     }
   }
 
-  /// Plays a preloaded sound effect right away.
-  Future<void> _playEffect(AudioPlayer player, String fileName) async {
-    if (soundVolume <= 0.0) {
-      return;
-    }
+  Future<void> _playEffect(
+    AudioPlayer player,
+    String fileName,
+  ) async {
+    if (soundVolume <= 0.0) return;
 
-    // Dip the music a little while the effect plays.
     _duckMusic(player);
 
     try {
       if (_effectsReady) {
-        // Already loaded: restart from the beginning and play instantly.
         await player.stop();
         await player.resume();
       } else {
-        // Not loaded yet: load and play.
         await player.play(
           AssetSource('sounds/$fileName'),
           volume: soundVolume,
@@ -261,7 +256,6 @@ class _MathGameState extends State<MathGame> {
     } catch (error) {
       debugPrint('Could not play sound $fileName: $error');
 
-      // Last try: load and play it the slower way.
       try {
         await player.play(
           AssetSource('sounds/$fileName'),
@@ -284,8 +278,7 @@ class _MathGameState extends State<MathGame> {
   void playCompleteSound() {
     _playEffect(_completePlayer, 'level up.mp3');
   }
-
-  Future<void> changeMusicVolume(double value) async {
+    Future<void> changeMusicVolume(double value) async {
     final double volume = value.clamp(0.0, 1.0).toDouble();
 
     if (!mounted) return;
@@ -293,6 +286,9 @@ class _MathGameState extends State<MathGame> {
     setState(() {
       musicVolume = volume;
     });
+
+    // Save this user's music volume.
+    await AudioSettings.instance.setMusicVolume(volume);
 
     try {
       if (volume <= 0.0) {
@@ -304,7 +300,7 @@ class _MathGameState extends State<MathGame> {
       }
 
       if (_musicStoppedForMute) {
-        // Do not play music behind the pause/options screens.
+        // Don't start music while the game is paused or complete.
         if (isPaused || gameOver) {
           debugPrint(
             'Music set to ${(volume * 100).round()}%; '
@@ -337,6 +333,9 @@ class _MathGameState extends State<MathGame> {
       soundVolume = volume;
     });
 
+    // Save this user's sound-effects volume.
+    await AudioSettings.instance.setSoundVolume(volume);
+
     try {
       for (final AudioPlayer player in _effectPlayers) {
         await player.setVolume(volume);
@@ -368,7 +367,7 @@ class _MathGameState extends State<MathGame> {
 
     questionTimer?.cancel();
 
-    // Cancel any pending "restore the music volume" step.
+    // Cancel any pending music-volume restoration.
     _duckToken++;
 
     setState(() {
@@ -504,8 +503,7 @@ class _MathGameState extends State<MathGame> {
       },
     );
   }
-
-  // ============================================================
+    // ============================================================
   // ERROR ANIMATION
   // ============================================================
 
@@ -691,7 +689,7 @@ class _MathGameState extends State<MathGame> {
       wrongCount++;
       streak = 0;
 
-      // Sound first, so it starts at the same moment as the shake.
+      // Start the wrong-answer sound immediately.
       playWrongSound();
       triggerScreenShake();
     }
@@ -832,6 +830,10 @@ class _MathGameState extends State<MathGame> {
     Navigator.pop(context);
   }
 
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
   @override
   void dispose() {
     _gameSession++;
@@ -851,8 +853,7 @@ class _MathGameState extends State<MathGame> {
 
     super.dispose();
   }
-
-  // ============================================================
+    // ============================================================
   // BUILD
   // ============================================================
 
@@ -910,7 +911,10 @@ class _MathGameState extends State<MathGame> {
                         decoration: BoxDecoration(
                           color: const Color(0xFFFFD700),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white, width: 2),
+                          border: Border.all(
+                            color: Colors.white,
+                            width: 2,
+                          ),
                           boxShadow: const [
                             BoxShadow(
                               color: Colors.black45,
@@ -992,7 +996,12 @@ class _MathGameState extends State<MathGame> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 440),
                 child: Container(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+                  padding: const EdgeInsets.fromLTRB(
+                    22,
+                    28,
+                    22,
+                    24,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF3B0B46).withOpacity(0.96),
                     borderRadius: BorderRadius.circular(28),
@@ -1079,7 +1088,10 @@ class _MathGameState extends State<MathGame> {
     final int percentage = (value * 100).round();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 15,
+      ),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.08),
         borderRadius: BorderRadius.circular(18),
@@ -1150,8 +1162,7 @@ class _MathGameState extends State<MathGame> {
       onPressed: onPressed,
     );
   }
-
-  // ============================================================
+    // ============================================================
   // HEADER
   // ============================================================
 
@@ -1162,7 +1173,6 @@ class _MathGameState extends State<MathGame> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           const SizedBox(width: 48),
-
           Container(
             padding: const EdgeInsets.symmetric(
               horizontal: 18,
@@ -1186,7 +1196,6 @@ class _MathGameState extends State<MathGame> {
               ),
             ),
           ),
-
           if (!gameOver && !isPaused)
             IconButton(
               onPressed: pauseGame,
@@ -1225,12 +1234,19 @@ class _MathGameState extends State<MathGame> {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildHudItem('⭐ XP', '$xp', Colors.amber),
-              _buildHudItem('🔥 Streak', '$streak', Colors.orangeAccent),
-              _buildHudItem('🏆 Best', '$bestStreak', Colors.cyanAccent),
+              _buildHudItem(
+                '🔥 Streak',
+                '$streak',
+                Colors.orangeAccent,
+              ),
+              _buildHudItem(
+                '🏆 Best',
+                '$bestStreak',
+                Colors.cyanAccent,
+              ),
             ],
           ),
         ),
-
         Column(
           children: [
             Text(
@@ -1243,7 +1259,6 @@ class _MathGameState extends State<MathGame> {
               ),
             ),
             const SizedBox(height: 10),
-
             Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: 18,
@@ -1286,7 +1301,6 @@ class _MathGameState extends State<MathGame> {
             ),
           ],
         ),
-
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 28),
@@ -1324,7 +1338,6 @@ class _MathGameState extends State<MathGame> {
             ),
           ),
         ),
-
         Column(
           children: [
             Transform.translate(
@@ -1361,7 +1374,9 @@ class _MathGameState extends State<MathGame> {
                   ),
                   decoration: const InputDecoration(
                     border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(vertical: 10),
+                    contentPadding: EdgeInsets.symmetric(
+                      vertical: 10,
+                    ),
                     hintText: '?',
                     hintStyle: TextStyle(
                       color: Colors.black26,
@@ -1373,9 +1388,7 @@ class _MathGameState extends State<MathGame> {
                 ),
               ),
             ),
-
             const SizedBox(height: 20),
-
             _3DButton(
               text: 'SUBMIT',
               color: const Color(0xFF38EF7D),
@@ -1385,7 +1398,6 @@ class _MathGameState extends State<MathGame> {
             ),
           ],
         ),
-
         AnimatedOpacity(
           opacity: showFeedback ? 1 : 0,
           duration: const Duration(milliseconds: 200),
@@ -1438,7 +1450,10 @@ class _MathGameState extends State<MathGame> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(24),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            filter: ImageFilter.blur(
+              sigmaX: 10,
+              sigmaY: 10,
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: 20,
@@ -1459,13 +1474,14 @@ class _MathGameState extends State<MathGame> {
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
-                      color: passed ? Colors.amber : Colors.redAccent,
+                      color: passed
+                          ? Colors.amber
+                          : Colors.redAccent,
                       letterSpacing: 1,
                     ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
-
                   Text(
                     passed
                         ? 'Great job! You solved the math questions.'
@@ -1477,7 +1493,6 @@ class _MathGameState extends State<MathGame> {
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1498,7 +1513,6 @@ class _MathGameState extends State<MathGame> {
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
@@ -1511,7 +1525,6 @@ class _MathGameState extends State<MathGame> {
                     ],
                   ),
                   const SizedBox(height: 8),
-
                   Text(
                     '🎯 Accuracy: ${accuracy.toStringAsFixed(0)}%',
                     style: const TextStyle(
@@ -1521,7 +1534,6 @@ class _MathGameState extends State<MathGame> {
                     ),
                   ),
                   const SizedBox(height: 20),
-
                   _buildChunkyButton(
                     label: 'Try Again',
                     icon: Icons.refresh_rounded,
@@ -1529,7 +1541,6 @@ class _MathGameState extends State<MathGame> {
                     onPressed: restartGame,
                   ),
                   const SizedBox(height: 10),
-
                   _buildChunkyButton(
                     label: 'Main Menu',
                     icon: Icons.home_rounded,
@@ -1544,31 +1555,42 @@ class _MathGameState extends State<MathGame> {
       ),
     );
   }
-
-  // ============================================================
+    // ============================================================
   // STAT BADGE
   // ============================================================
 
-  Widget _buildStatBadge(String title, String value) {
-    return Column(
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white60,
-            fontSize: 13,
+  Widget _buildStatBadge(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1582,37 +1604,15 @@ class _MathGameState extends State<MathGame> {
     required Color color,
     required VoidCallback onPressed,
   }) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        height: 50,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: 0.4),
-              offset: const Offset(0, 4),
-              blurRadius: 8,
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
-        ),
+    return SizedBox(
+      width: double.infinity,
+      child: _3DButton(
+        text: label,
+        icon: icon,
+        color: color,
+        shadowColor: Colors.black38,
+        textColor: Colors.white,
+        onPressed: onPressed,
       ),
     );
   }
@@ -1624,24 +1624,25 @@ class _MathGameState extends State<MathGame> {
   Widget _buildHudItem(
     String label,
     String value,
-    Color valueColor,
+    Color color,
   ) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 4),
         Text(
           value,
-          style: TextStyle(
-            color: valueColor,
-            fontSize: 18,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
             fontWeight: FontWeight.w900,
           ),
         ),
@@ -1651,11 +1652,13 @@ class _MathGameState extends State<MathGame> {
 }
 
 // ============================================================
-// REUSABLE CHUNKY 3D GAME BUTTON
+// 3D BUTTON WIDGET
+// Keep this class OUTSIDE the _MathGameState class.
 // ============================================================
 
 class _3DButton extends StatefulWidget {
   final String text;
+  final IconData? icon;
   final Color color;
   final Color shadowColor;
   final Color textColor;
@@ -1663,6 +1666,7 @@ class _3DButton extends StatefulWidget {
 
   const _3DButton({
     required this.text,
+    this.icon,
     required this.color,
     required this.shadowColor,
     required this.textColor,
@@ -1698,43 +1702,49 @@ class _3DButtonState extends State<_3DButton> {
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
-        width: 200,
-        height: 54,
         transform: Matrix4.translationValues(
           0,
           _isPressed ? 4 : 0,
           0,
         ),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
           color: widget.color,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.8),
-            width: 2,
-          ),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
               color: widget.shadowColor,
-              offset: Offset(0, _isPressed ? 1 : 5),
+              offset: Offset(0, _isPressed ? 0 : 5),
               blurRadius: 0,
-            ),
-            const BoxShadow(
-              color: Colors.black38,
-              offset: Offset(0, 6),
-              blurRadius: 8,
             ),
           ],
         ),
-        child: Center(
-          child: Text(
-            widget.text,
-            style: TextStyle(
-              color: widget.textColor,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.2,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.icon != null) ...[
+              Icon(
+                widget.icon,
+                color: widget.textColor,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                widget.text,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: widget.textColor,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.8,
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

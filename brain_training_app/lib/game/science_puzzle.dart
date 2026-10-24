@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import 'memory_match.dart';
 import '../widgets/pause_menu.dart';
+import '../services/audio_settings.dart';
 
 class SciencePuzzle extends StatefulWidget {
   const SciencePuzzle({super.key});
@@ -54,9 +55,11 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   bool showOptions = false;
 
   // Match MathGame: both audio settings start at 50%.
-  double musicVolume = 0.5;
-  double soundVolume = 0.5;
+  double musicVolume = AudioSettings.defaultVolume;
+  double soundVolume = AudioSettings.defaultVolume;
+
   bool _musicStoppedForMute = false;
+  bool _audioInitialized = false;
 
   int xp = 0;
   int score = 0;
@@ -109,9 +112,36 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   // AUDIO
   // ============================================================
 
+  
+  // ============================================================
+  // AUDIO
+  // ============================================================
+
   Future<void> _initAudio() async {
-    await _configureAudio();
-    await _startBackgroundMusic();
+    try {
+      final settings = AudioSettings.instance;
+
+      await settings.initialize();
+      await settings.loadForCurrentUser();
+
+      if (!mounted) return;
+
+      setState(() {
+        musicVolume = settings.musicVolume;
+        soundVolume = settings.soundVolume;
+      });
+
+      await _configureAudio();
+
+      if (!mounted) return;
+
+      _audioInitialized = true;
+
+      await player.setVolume(soundVolume);
+      await _startBackgroundMusic();
+    } catch (error) {
+      debugPrint('Could not initialize puzzle audio: $error');
+    }
   }
 
   Future<void> _configureAudio() async {
@@ -128,6 +158,8 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     try {
       await _musicPlayer.setAudioContext(audioContext);
       await player.setAudioContext(audioContext);
+
+      await _musicPlayer.setVolume(musicVolume);
       await player.setVolume(soundVolume);
     } catch (error) {
       debugPrint('Could not configure audio mixing: $error');
@@ -137,11 +169,13 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   Future<void> _startBackgroundMusic() async {
     if (musicVolume <= 0.0) {
       _musicStoppedForMute = true;
+
       try {
         await _musicPlayer.stop();
       } catch (error) {
         debugPrint('Could not stop muted music: $error');
       }
+
       return;
     }
 
@@ -151,10 +185,12 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       await _musicPlayer.stop();
       await _musicPlayer.setReleaseMode(ReleaseMode.loop);
       await _musicPlayer.setVolume(musicVolume);
+
       await _musicPlayer.play(
         AssetSource('sounds/The_Measured_Proof.mp3'),
         volume: musicVolume,
       );
+
       _musicStoppedForMute = false;
     } catch (error) {
       debugPrint('Could not play background music: $error');
@@ -162,25 +198,32 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   }
 
   Future<void> _playSound(String assetName) async {
-    if (soundVolume <= 0.0) return;
+    if (soundVolume <= 0.0 || !_audioInitialized) return;
 
     try {
       await player.stop();
       await player.setVolume(soundVolume);
+
       await player.play(
         AssetSource(assetName),
         volume: soundVolume,
       );
-    } catch (e) {
-      debugPrint('Audio error: $e');
+    } catch (error) {
+      debugPrint('Audio error for $assetName: $error');
     }
   }
 
   Future<void> changeMusicVolume(double value) async {
     final double volume = value.clamp(0.0, 1.0).toDouble();
+
     if (!mounted) return;
 
-    setState(() => musicVolume = volume);
+    setState(() {
+      musicVolume = volume;
+    });
+
+    // Save the music preference for the signed-in Firebase account.
+    await AudioSettings.instance.setMusicVolume(volume);
 
     try {
       if (volume <= 0.0) {
@@ -200,9 +243,15 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   Future<void> changeSoundVolume(double value) async {
     final double volume = value.clamp(0.0, 1.0).toDouble();
+
     if (!mounted) return;
 
-    setState(() => soundVolume = volume);
+    setState(() {
+      soundVolume = volume;
+    });
+
+    // Save the sound-effects preference for this account.
+    await AudioSettings.instance.setSoundVolume(volume);
 
     try {
       await player.setVolume(volume);
@@ -213,12 +262,12 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   void showGameOptions() {
     if (!mounted) return;
-    setState(() => showOptions = true);
+
+    setState(() {
+      showOptions = true;
+    });
   }
 
-  // ============================================================
-  // START / RESTART
-  // ============================================================
 
   void startNewGame() {
     timer?.cancel();
@@ -263,10 +312,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     _startBackgroundMusic();
   }
 
-  // ============================================================
-  // PAUSE / RESUME
-  // ============================================================
-
   void pauseGame() {
     if (completed || gameEnded || isPaused) return;
 
@@ -309,10 +354,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     }
   }
 
-  // ============================================================
-  // MEMORY PHASE
-  // ============================================================
-
   void startMemory() {
     timer?.cancel();
 
@@ -338,9 +379,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-  // ============================================================
-  // SCRAMBLE PUZZLE
-  // ============================================================
 
   void scramble() {
     do {
@@ -353,10 +391,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
     startGameTimer();
   }
-
-  // ============================================================
-  // GAME TIMER
-  // ============================================================
 
   void startGameTimer() {
     timer?.cancel();
@@ -391,10 +425,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       },
     );
   }
-
-  // ============================================================
-  // SELECT / SWAP PIECES
-  // ============================================================
 
   void movePiece(int index) {
     if (completed ||
@@ -443,10 +473,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     checkSolved();
   }
 
-  // ============================================================
-  // CHECK SOLVED
-  // ============================================================
-
   bool _isSolved() {
     for (int i = 0; i < pieces.length; i++) {
       if (pieces[i] != solved[i]) {
@@ -462,10 +488,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       endGame(true);
     }
   }
-
-  // ============================================================
-  // SCORE
-  // ============================================================
 
   void calculateResults() {
     final int timeUsed =
@@ -499,10 +521,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     }
   }
 
-  // ============================================================
-  // GRADE
-  // ============================================================
-
   String getGrade() {
     if (score >= 900) return 'S';
     if (score >= 750) return 'A';
@@ -511,10 +529,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
     return 'D';
   }
-
-  // ============================================================
-  // END GAME
-  // ============================================================
 
   void endGame(bool win) {
     if (gameEnded) return;
@@ -548,10 +562,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     saveScore(win);
   }
 
-  // ============================================================
-  // FIREBASE
-  // ============================================================
-
   Future<void> saveScore(bool win) async {
     try {
       await FirebaseFirestore.instance
@@ -573,10 +583,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     }
   }
 
-  // ============================================================
-  // NAVIGATION
-  // ============================================================
-
   void goToMainMenu() {
     Navigator.pop(context);
   }
@@ -590,10 +596,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // CHUNKY BUTTON
-  // ============================================================
 
   Widget _buildChunkyButton({
     required String label,
@@ -645,10 +647,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // CUSTOM APP BAR
-  // ============================================================
 
   Widget _buildCustomAppBar() {
     return SafeArea(
@@ -708,10 +706,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // PUZZLE PIECE
-  // ============================================================
 
   Widget buildPuzzlePiece(int index) {
     final pieceNumber =
@@ -806,10 +800,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // RESULT SCREEN
-  // ============================================================
 
   Widget buildResultScreen() {
     final bool passed = xp > 0;
@@ -1035,10 +1025,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-  // ============================================================
-  // STAT BADGE
-  // ============================================================
-
   Widget _buildStatBadge(
     String title,
     String value,
@@ -1069,10 +1055,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ],
     );
   }
-
-  // ============================================================
-  // HUD CARD
-  // ============================================================
 
   Widget _buildHudCard({
     required IconData icon,
@@ -1157,10 +1139,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // GAMEPLAY CONTENT
-  // ============================================================
 
   Widget _buildGameplay() {
     return LayoutBuilder(
@@ -1317,10 +1295,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-  // ============================================================
-  // MEMORY IMAGE
-  // ============================================================
-
   Widget _buildMemoryImage() {
     return Container(
       decoration:
@@ -1349,10 +1323,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // PUZZLE GRID
-  // ============================================================
 
   Widget _buildPuzzleGrid() {
     return Container(
@@ -1390,10 +1360,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // OPTIONS SCREEN (matches MathGame)
-  // ============================================================
 
   Widget _buildOptionsScreen() {
     return Material(
@@ -1552,10 +1518,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
-
   @override
   Widget build(
     BuildContext context,
@@ -1607,10 +1569,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
               ],
             ),
 
-            // ==================================================
-            // PAUSE MENU
-            // ==================================================
-
             if (isPaused)
               Positioned.fill(
                 child: showOptions
@@ -1622,10 +1580,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
                         onMainMenu: goToMainMenu,
                       ),
               ),
-
-            // ==================================================
-            // CONFETTI
-            // ==================================================
 
             Align(
               alignment:
@@ -1653,10 +1607,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       ),
     );
   }
-
-  // ============================================================
-  // DISPOSE
-  // ============================================================
 
   @override
   void dispose() {
