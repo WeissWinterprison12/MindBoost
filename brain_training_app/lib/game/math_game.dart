@@ -6,6 +6,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/audio_settings.dart';
 import '../widgets/pause_menu.dart';
@@ -757,21 +759,49 @@ class _MathGameState extends State<MathGame> {
   // FIRESTORE
   // ============================================================
 
+  
   Future<void> saveScore() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final user = FirebaseAuth.instance.currentUser;
+
+      String? guestId = prefs.getString('guest_player_id');
+
+      if (user == null && (guestId == null || guestId.isEmpty)) {
+        guestId = 'guest_${DateTime.now().microsecondsSinceEpoch}';
+        await prefs.setString('guest_player_id', guestId);
+      }
+
+      final savedName = prefs.getString('player_username')?.trim();
+      final displayName = user?.displayName?.trim();
+
+      final String name =
+          savedName != null && savedName.isNotEmpty
+              ? savedName
+              : displayName != null && displayName.isNotEmpty
+                  ? displayName
+                  : 'Guest Player';
+
       await FirebaseFirestore.instance.collection('scores').add({
+        'playerId': user?.uid ?? guestId,
+        'playerName': name,
+        'level': 1,
+        'levelName': 'Math',
         'correct': correctCount,
         'wrong': wrongCount,
         'accuracy': accuracy,
         'xp': xp,
         'streak': bestStreak,
         'grade': getGrade(),
-        'timestamp': DateTime.now(),
+        'timestamp': FieldValue.serverTimestamp(),
       });
+
+      debugPrint('Math Game score saved successfully.');
     } catch (error) {
-      debugPrint('Could not save score: $error');
+      debugPrint('Could not save Math Game score: $error');
     }
   }
+
 
   // ============================================================
   // RESTART GAME
@@ -864,14 +894,14 @@ class _MathGameState extends State<MathGame> {
         width: double.infinity,
         height: double.infinity,
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
+          gradient: const LinearGradient(
             colors: [
-              Color(0xFF4A0E4E),
-              Color(0xFF811252),
-              Color(0xFF2E0854),
+              Color(0xFF7564B8), // Soft violet at the top
+              Color(0xFF806BC4), // Lighter lavender violet
+              Color(0xFF5B4A98), // Soft deep violet at the bottom
             ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(

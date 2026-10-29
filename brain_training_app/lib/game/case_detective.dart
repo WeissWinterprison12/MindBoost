@@ -30,7 +30,7 @@ class DetectiveCase {
 }
 
 class LogicDetective extends StatefulWidget {
-  const LogicDetective({super.key});
+  const LogicDetective({super.key}); 
 
   @override
   State<LogicDetective> createState() => _LogicDetectiveState();

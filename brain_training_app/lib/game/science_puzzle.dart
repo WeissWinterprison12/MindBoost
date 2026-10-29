@@ -5,7 +5,8 @@ import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
-
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'memory_match.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
@@ -372,22 +373,56 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     saveScore(win);
   }
 
+  
   Future<void> saveScore(bool win) async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final user = FirebaseAuth.instance.currentUser;
+
+      // Use the Firebase UID when authenticated.
+      // Otherwise, use the locally saved guest ID.
+      String? guestId = prefs.getString('guest_player_id');
+
+      if (user == null && (guestId == null || guestId.isEmpty)) {
+        guestId = 'guest_${DateTime.now().microsecondsSinceEpoch}';
+        await prefs.setString('guest_player_id', guestId);
+      }
+
+      final savedName = prefs.getString('player_username')?.trim();
+      final displayName = user?.displayName?.trim();
+
+      final String playerName =
+          savedName != null && savedName.isNotEmpty
+              ? savedName
+              : displayName != null && displayName.isNotEmpty
+                  ? displayName
+                  : 'Guest Player';
+
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Science Puzzle',
+        'playerId': user?.uid ?? guestId,
+        'playerName': playerName,
+
+        // Leaderboard identification
+        'level': 2,
+        'levelName': 'Science Puzzle',
+
+        // Level 2 performance
         'image': selectedImage,
         'moves': moves,
         'score': score,
         'xp': xp,
         'grade': win ? getGrade() : 'F',
         'completed': win,
-        'timestamp': DateTime.now(),
+
+        'timestamp': FieldValue.serverTimestamp(),
       });
+
+      debugPrint('Science Puzzle score saved successfully.');
     } catch (e) {
-      debugPrint('Error saving score: $e');
+      debugPrint('Error saving Science Puzzle score: $e');
     }
   }
+
 
   void goToMainMenu() {
     Navigator.pop(context);

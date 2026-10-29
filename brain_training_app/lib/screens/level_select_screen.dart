@@ -27,11 +27,52 @@ class LevelSelectScreen extends StatefulWidget {
 
 class _LevelSelectScreenState extends State<LevelSelectScreen>
     with RouteAware {
-  // ============================================================
-  // MENU MUSIC
-  // The music keeps playing here, pauses while a game is open, and
-  // starts again when the player comes back to this screen.
-  // ============================================================
+  @override
+    void initState() {
+      super.initState();
+      _syncLocalProfileToFirebase();
+    }
+
+    Future<void> _syncLocalProfileToFirebase() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+
+        final savedName = prefs.getString('player_username')?.trim();
+        final savedAvatar = prefs.getInt('player_avatar') ?? 0;
+
+        final username =
+            savedName != null && savedName.isNotEmpty
+                ? savedName
+                : 'Guest Player';
+
+        final auth = FirebaseAuth.instance;
+        var user = auth.currentUser;
+
+        if (user == null) {
+          final credential = await auth.signInAnonymously();
+          user = credential.user;
+        }
+
+        if (user == null) return;
+
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .set({
+          'playerId': user.uid,
+          'username': username,
+          'avatar': savedAvatar
+              .clamp(0, kAvatarCount - 1)
+              .toInt(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        if (mounted) setState(() {});
+        debugPrint('Player profile synced to Firebase.');
+      } catch (error) {
+        debugPrint('Profile sync skipped: $error');
+      }
+    }
 
   @override
   void didChangeDependencies() {
@@ -73,9 +114,9 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF4A0E4E),
-              Color(0xFF811252),
-              Color(0xFF2E0854),
+              Color(0xFF7564B8), // lighter violet at the top
+              Color(0xFF806BC4), // brighter lavender-violet in the middle
+              Color(0xFF5B4A98), // softer violet at the bottom
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -156,24 +197,52 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                             ).createShader(bounds),
-                            child: const FittedBox(
+                            child: FittedBox(
                               fit: BoxFit.scaleDown,
                               alignment: Alignment.centerLeft,
-                              child: Text(
-                                '🧠 MindBoost',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 36,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.2,
-                                  shadows: [
-                                    Shadow(
-                                      color: Colors.black45,
-                                      offset: Offset(2, 4),
-                                      blurRadius: 6,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  // Cleaned logo container with circular clipping
+                                  Container(
+                                    width: 42,
+                                    height: 42,
+                                    clipBehavior: Clip.antiAlias,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
                                     ),
-                                  ],
-                                ),
+                                    child: Image.asset(
+                                      'assets/images/mindboostlogo.jpg',
+                                      width: 42,
+                                      height: 42,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) =>
+                                          const Icon(
+                                        Icons.image_not_supported_rounded,
+                                        color: Colors.white,
+                                        size: 36,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    'MindBoost',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 36,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.2,
+                                      shadows: [
+                                        Shadow(
+                                          color: Colors.black45,
+                                          offset: Offset(2, 4),
+                                          blurRadius: 6,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -301,7 +370,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       page: const MemoryMatch(),
                     ),
 
-                    // Pattern Logic + Sequence Recall merged into one level.
                     GameLevelCard(
                       levelNum: '4',
                       title: 'Pattern Logic',
@@ -376,7 +444,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const PathFinder(),
                     ),
-
                   ],
                 ),
               ),
@@ -936,120 +1003,9 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ],
                 ),
               ),
-
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: widget.borderColor,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  widget.unlocked
-                      ? Icons.play_arrow_rounded
-                      : Icons.lock_rounded,
-                  color: widget.borderColor,
-                  size: 28,
-                ),
-              ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-// ============================================================
-// LOCKED LEVEL CARD
-// ============================================================
-
-class LockedLevelCard extends StatelessWidget {
-  final String levelNum;
-  final String title;
-  final String subtitle;
-
-  const LockedLevelCard({
-    super.key,
-    required this.levelNum,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 18),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 14,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.25),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: Colors.white24,
-          width: 2,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 65,
-            height: 65,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.lock_rounded,
-                color: Colors.white54,
-                size: 30,
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 14),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'LEVEL $levelNum',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white60,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

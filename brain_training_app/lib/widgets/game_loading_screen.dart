@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -78,11 +77,11 @@ class _GameLoadingScreenState extends State<GameLoadingScreen>
       body: Container(
         width: double.infinity,
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
+          gradient: const LinearGradient(
             colors: [
-              Color(0xFF4A0E4E),
-              Color(0xFF811252),
-              Color(0xFF2E0854),
+              Color(0xFF7564B8), // Soft violet at the top
+              Color(0xFF806BC4), // Lighter lavender violet
+              Color(0xFF5B4A98), // Soft deep violet at the bottom
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -100,6 +99,7 @@ class _GameLoadingScreenState extends State<GameLoadingScreen>
                     child: Container(
                       width: 130,
                       height: 130,
+                      clipBehavior: Clip.antiAlias, // Clips the square image into a circle, removing black corners
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.12),
                         shape: BoxShape.circle,
@@ -118,10 +118,10 @@ class _GameLoadingScreenState extends State<GameLoadingScreen>
                       ),
                       child: Center(
                         child: Image.asset(
-                          'assets/images/mindboost_logo.jpg',
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.contain,
+                          'assets/images/mindboostlogo.jpg',
+                          width: 130,
+                          height: 130,
+                          fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) => const Text(
                             '🧠',
                             style: TextStyle(fontSize: 72),

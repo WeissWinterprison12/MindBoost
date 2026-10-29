@@ -8,6 +8,7 @@ import 'screens/level_select_screen.dart';
 import 'screens/auth_screen.dart';
 import 'services/menu_music.dart';
 import 'widgets/menu_options.dart';
+import 'screens/leaderboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,8 +33,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'MindBoost',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF811252),
+        colorScheme: ColorScheme.fromSeed(  
+          seedColor: const Color(0xFF806BC4),
         ),
         useMaterial3: true,
       ),
@@ -203,11 +204,11 @@ class HomeScreen extends StatelessWidget {
         width: double.infinity,
         height: double.infinity,
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
+          gradient: const LinearGradient(
             colors: [
-              Color(0xFF4A0E4E),
-              Color(0xFF811252),
-              Color(0xFF2E0854),
+              Color(0xFF7564B8), // Soft violet at the top
+              Color(0xFF806BC4), // Lighter lavender violet
+              Color(0xFF5B4A98), // Soft deep violet at the bottom
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -300,7 +301,7 @@ class HomeScreen extends StatelessWidget {
                               ),
                               child: ClipOval(
                                 child: Image.asset(
-                                  'assets/images/mindboost_logo.jpg',
+                                  'assets/images/mindboostlogo.jpg',
                                   fit: BoxFit.cover,
                                   // If the image can't be loaded, show the brain emoji.
                                   errorBuilder:
@@ -395,22 +396,10 @@ class HomeScreen extends StatelessWidget {
                                 shadowColor: const Color(0xFF993D00),
                                 textColor: Colors.white,
                                 onPressed: () {
-                                  ScaffoldMessenger.of(context)
-                                      .showSnackBar(
-                                    SnackBar(
-                                      content: const Text(
-                                        'Leaderboard coming soon!',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      backgroundColor:
-                                          Colors.purple.shade900,
-                                      behavior: SnackBarBehavior.floating,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(15),
-                                      ),
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const LeaderboardScreen(),
                                     ),
                                   );
                                 },

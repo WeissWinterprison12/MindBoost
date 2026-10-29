@@ -153,7 +153,7 @@ class OptionsMenu extends StatelessWidget {
 
           if (onMuteAll != null) ...[
             _OptionsButton(
-              text: allMuted ? 'UNMUTE ALL' : 'MUTE ALL SOUNDS',
+              text: allMuted ? 'UNMUTE' : 'MUTE',
               icon: allMuted
                   ? Icons.volume_up_rounded
                   : Icons.volume_off_rounded,
