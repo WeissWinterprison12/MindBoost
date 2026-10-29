@@ -28,6 +28,9 @@ Future<void> showMenuOptions(BuildContext context) async {
             onMusicVolumeChanged: (value) {
               MenuMusic.instance.setVolume(value);
             },
+            onMusicMuteToggle: MenuMusic.instance.toggleMute,
+            onMuteAll: MenuMusic.instance.toggleMute,
+            allMuted: volume <= 0.0,
             backLabel: 'CLOSE',
             backIcon: Icons.close_rounded,
             onBack: () {

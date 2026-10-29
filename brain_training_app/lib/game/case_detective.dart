@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/game_audio.dart';
+import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
 
 class DetectiveCase {
@@ -49,7 +50,11 @@ class _LogicDetectiveState extends State<LogicDetective> {
   // (for example while Firebase is not set up yet).
   static const bool enableScoreSaving = true;
 
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  // Shared audio controller (music, effects, mute, ducking).
+  final GameAudio audio = GameAudio(
+    musicAsset: 'sounds/Closing_the_Paper_Trail.mp3',
+  );
+
   final ConfettiController _confettiController =
       ConfettiController(duration: const Duration(seconds: 3));
   final ScrollController _scrollController = ScrollController();
@@ -63,6 +68,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
   int? _selectedAnswer;
 
   bool _isPaused = false;
+  bool _showOptions = false;
   bool _finished = false; // An answer was chosen or time ran out.
   bool _showResults = false; // The level complete screen is visible.
   bool _isCorrect = false;
@@ -163,7 +169,18 @@ class _LogicDetectiveState extends State<LogicDetective> {
     // Pick one random case each time this screen is opened.
     _currentCase = _cases[_random.nextInt(_cases.length)];
 
+    _initAudio();
     _startTimer();
+  }
+
+  // ------------------------------------------------------------
+  // AUDIO
+  // ------------------------------------------------------------
+
+  Future<void> _initAudio() async {
+    await audio.init();
+    if (!mounted) return;
+    await audio.startMusic();
   }
 
   // ------------------------------------------------------------
@@ -195,15 +212,6 @@ class _LogicDetectiveState extends State<LogicDetective> {
   // GAME LOGIC
   // ------------------------------------------------------------
 
-  Future<void> _playSound(String filename) async {
-    try {
-      await _audioPlayer.stop();
-      await _audioPlayer.play(AssetSource('sounds/$filename'));
-    } catch (e) {
-      debugPrint('Could not play sound $filename: $e');
-    }
-  }
-
   void _answerQuestion(int index) {
     if (_finished || _isPaused) return;
 
@@ -226,7 +234,11 @@ class _LogicDetectiveState extends State<LogicDetective> {
       _timedOut = timedOut;
     });
 
-    _playSound(correct ? 'correct.mp3' : 'wrong.mp3');
+    if (correct) {
+      audio.playCorrect();
+    } else {
+      audio.playWrong();
+    }
 
     // Save in the background. The screen never waits for this,
     // so a missing or slow database cannot freeze the game.
@@ -240,9 +252,11 @@ class _LogicDetectiveState extends State<LogicDetective> {
 
       setState(() => _showResults = true);
 
+      audio.stopMusic();
+
       if (correct) {
         _confettiController.play();
-        _playSound('level up.mp3');
+        audio.playComplete();
       }
     });
   }
@@ -260,7 +274,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
 
     try {
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Logic Detective',
+        'level': 'Insert Detective',
         'caseTitle': _currentCase.title,
         'correct': correct ? 1 : 0,
         'wrongAttempts': correct ? 0 : 1,
@@ -286,20 +300,34 @@ class _LogicDetectiveState extends State<LogicDetective> {
     if (_finished || _isPaused) return;
 
     _timer?.cancel();
-    setState(() => _isPaused = true);
+
+    audio.pauseAll();
+
+    setState(() {
+      _isPaused = true;
+      _showOptions = false;
+    });
   }
 
-  void _resumeGame() {
+  Future<void> _resumeGame() async {
     if (_finished) return;
 
-    setState(() => _isPaused = false);
+    setState(() {
+      _isPaused = false;
+      _showOptions = false;
+    });
+
+    await audio.resume();
+
+    if (!mounted) return;
+
     _startTimer();
   }
 
   void _resetRound({required bool newCase}) {
     _timer?.cancel();
     _resultsTimer?.cancel();
-    _audioPlayer.stop();
+    audio.stopEffects();
 
     if (newCase && _cases.length > 1) {
       final int current = _cases.indexOf(_currentCase);
@@ -318,12 +346,14 @@ class _LogicDetectiveState extends State<LogicDetective> {
       _isCorrect = false;
       _timedOut = false;
       _isPaused = false;
+      _showOptions = false;
     });
 
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
 
+    audio.startMusic();
     _startTimer();
   }
 
@@ -420,7 +450,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
   // HEADER AND STATS
   // ------------------------------------------------------------
 
-    Widget _buildHeader() {
+  Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Row(
@@ -1072,22 +1102,21 @@ class _LogicDetectiveState extends State<LogicDetective> {
                   ],
                 ),
               ),
+
+              // Pause menu + shared options screen
               if (_isPaused)
                 Positioned.fill(
-                  child: PauseMenu(
-                    onResume: _resumeGame,
-                    onRestart: _restartGame,
-                    onOptions: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Options will be available here later.',
-                          ),
+                  child: _showOptions
+                      ? GameOptionsMenu(
+                          audio: audio,
+                          onBack: () => setState(() => _showOptions = false),
+                        )
+                      : PauseMenu(
+                          onResume: _resumeGame,
+                          onRestart: _restartGame,
+                          onOptions: () => setState(() => _showOptions = true),
+                          onMainMenu: _goToMainMenu,
                         ),
-                      );
-                    },
-                    onMainMenu: _goToMainMenu,
-                  ),
                 ),
             ],
           ),
@@ -1101,7 +1130,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
     _timer?.cancel();
     _resultsTimer?.cancel();
     _scrollController.dispose();
-    _audioPlayer.dispose();
+    audio.dispose();
     _confettiController.dispose();
     super.dispose();
   }

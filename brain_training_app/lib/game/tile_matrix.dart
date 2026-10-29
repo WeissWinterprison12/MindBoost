@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/game_audio.dart';
+import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
 
 class MemoryMatrix extends StatefulWidget {
@@ -33,7 +34,10 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   static const int maxTilesToRemember = 7;
 
   final Random random = Random();
-  final AudioPlayer audioPlayer = AudioPlayer();
+
+  final GameAudio audio = GameAudio(
+    musicAsset: 'sounds/Recursive_Geometry.mp3',
+  );
 
   late final ConfettiController confettiController;
 
@@ -67,6 +71,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
   bool showingPattern = true;
   bool isPaused = false;
+  bool showOptions = false;
   bool checkingAnswer = false;
   bool roundFeedback = false;
   bool lastRoundCorrect = false;
@@ -90,6 +95,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
     _resetGame();
     _generatePattern();
+    _initAudio();
     _startGameTimer();
     _startPreviewTimer();
   }
@@ -100,10 +106,20 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     previewTimer?.cancel();
     feedbackTimer?.cancel();
 
-    audioPlayer.dispose();
+    audio.dispose();
     confettiController.dispose();
 
     super.dispose();
+  }
+
+  // ============================================================
+  // AUDIO
+  // ============================================================
+
+  Future<void> _initAudio() async {
+    await audio.init();
+    if (!mounted) return;
+    await audio.startMusic();
   }
 
   // ============================================================
@@ -129,6 +145,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
     showingPattern = true;
     isPaused = false;
+    showOptions = false;
     checkingAnswer = false;
     roundFeedback = false;
     lastRoundCorrect = false;
@@ -171,19 +188,6 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     wrongTileIndex = null;
     previewSeconds = previewDuration;
     showingPattern = true;
-  }
-
-  // ============================================================
-  // AUDIO
-  // ============================================================
-
-  Future<void> _playSound(String fileName) async {
-    try {
-      await audioPlayer.stop();
-      await audioPlayer.play(AssetSource('sounds/$fileName'));
-    } catch (e) {
-      debugPrint('Memory Matrix audio error: $e');
-    }
   }
 
   // ============================================================
@@ -303,7 +307,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       feedbackText = 'WRONG TILE!  •  -${wrongPenaltySeconds}s';
     });
 
-    _playSound('wrong.mp3');
+    audio.playWrong();
 
     feedbackTimer?.cancel();
     feedbackTimer = Timer(
@@ -356,7 +360,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       feedbackText = '+$earnedXp XP  •  +${correctBonusSeconds}s';
     });
 
-    _playSound('correct.mp3');
+    audio.playCorrect();
 
     feedbackTimer?.cancel();
     feedbackTimer = Timer(
@@ -395,21 +399,25 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     previewTimer?.cancel();
     gameTimer?.cancel();
 
-    audioPlayer.pause();
+    audio.pauseAll();
 
     setState(() {
       isPaused = true;
+      showOptions = false;
     });
   }
 
-  void _resumeGame() {
+  Future<void> _resumeGame() async {
     if (!isPaused || gameEnded) return;
 
     setState(() {
       isPaused = false;
+      showOptions = false;
     });
 
-    audioPlayer.resume();
+    await audio.resume();
+
+    if (!mounted) return;
 
     _startGameTimer();
 
@@ -432,6 +440,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     setState(() {
       gameEnded = true;
       isPaused = false;
+      showOptions = false;
       showingPattern = false;
       checkingAnswer = false;
       roundFeedback = false;
@@ -439,11 +448,13 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       saveFailed = false;
     });
 
+    audio.stopMusic();
+
     if (roundsCompleted > 0) {
-      _playSound('level up.mp3');
+      audio.playComplete();
       confettiController.play();
     } else {
-      _playSound('wrong.mp3');
+      audio.playWrong();
     }
 
     _saveScore();
@@ -493,13 +504,14 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     previewTimer?.cancel();
     feedbackTimer?.cancel();
 
-    audioPlayer.stop();
+    audio.stopEffects();
 
     setState(() {
       _resetGame();
       _generatePattern();
     });
 
+    audio.startMusic();
     _startGameTimer();
     _startPreviewTimer();
   }
@@ -778,11 +790,11 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
         final maxWidth = min(constraints.maxWidth, 360.0);
 
-        final sizeByWidth = (maxWidth - spacing * (gridColumns - 1)) /
-            gridColumns;
+        final sizeByWidth =
+            (maxWidth - spacing * (gridColumns - 1)) / gridColumns;
 
-        final sizeByHeight = (constraints.maxHeight - spacing * (gridRows - 1)) /
-            gridRows;
+        final sizeByHeight =
+            (constraints.maxHeight - spacing * (gridRows - 1)) / gridRows;
 
         final tileSize = max(40.0, min(min(sizeByWidth, sizeByHeight), 100.0));
 
@@ -1129,15 +1141,20 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
                 ],
               ),
 
-              // Pause menu
+              // Pause menu + shared options screen
               if (isPaused && !gameEnded)
                 Positioned.fill(
-                  child: PauseMenu(
-                    onResume: _resumeGame,
-                    onRestart: _restartGame,
-                    onOptions: () {},
-                    onMainMenu: _goToMainMenu,
-                  ),
+                  child: showOptions
+                      ? GameOptionsMenu(
+                          audio: audio,
+                          onBack: () => setState(() => showOptions = false),
+                        )
+                      : PauseMenu(
+                          onResume: _resumeGame,
+                          onRestart: _restartGame,
+                          onOptions: () => setState(() => showOptions = true),
+                          onMainMenu: _goToMainMenu,
+                        ),
                 ),
 
               // Confetti

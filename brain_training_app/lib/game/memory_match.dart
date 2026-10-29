@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/game_audio.dart';
+import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
 
 class MemoryMatch extends StatefulWidget {
@@ -72,11 +73,6 @@ class _MemoryMatchState extends State<MemoryMatch>
   bool isPaused = false;
   bool showOptions = false;
 
-  // Audio volumes start at 50%.
-  double musicVolume = 0.5;
-  double soundVolume = 0.5;
-  bool _musicStoppedForMute = false;
-
   // ============================================================
   // RESULTS
   // ============================================================
@@ -97,8 +93,11 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   late ConfettiController confettiController;
-  final AudioPlayer audioPlayer = AudioPlayer(); // Sound effects
-  final AudioPlayer _musicPlayer = AudioPlayer(); // Background music
+
+  // Shared audio controller, with this game's own music.
+  final GameAudio audio = GameAudio(
+    musicAsset: 'sounds/The_Shape_of_Thought.mp3',
+  );
 
   late AnimationController _shakeController;
   late Animation<double> _shakeAnimation;
@@ -123,13 +122,7 @@ class _MemoryMatchState extends State<MemoryMatch>
     _shakeAnimation = Tween<double>(
       begin: 0.0,
       end: 10.0,
-    )
-        .chain(
-          CurveTween(
-            curve: Curves.elasticIn,
-          ),
-        )
-        .animate(_shakeController);
+    ).chain(CurveTween(curve: Curves.elasticIn)).animate(_shakeController);
 
     _initAudio();
     startNewGame();
@@ -140,95 +133,9 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   Future<void> _initAudio() async {
-    await _configureAudio();
-    await _startBackgroundMusic();
-  }
-
-  Future<void> _configureAudio() async {
-    final AudioContext audioContext = AudioContext(
-      iOS: AudioContextIOS(
-        category: AVAudioSessionCategory.playback,
-        options: {AVAudioSessionOptions.mixWithOthers},
-      ),
-      android: AudioContextAndroid(
-        audioFocus: AndroidAudioFocus.none,
-      ),
-    );
-
-    try {
-      await _musicPlayer.setAudioContext(audioContext);
-      await audioPlayer.setAudioContext(audioContext);
-      await audioPlayer.setVolume(soundVolume);
-    } catch (error) {
-      debugPrint('Could not configure audio mixing: $error');
-    }
-  }
-
-  Future<void> _startBackgroundMusic() async {
-    if (musicVolume <= 0.0) {
-      _musicStoppedForMute = true;
-      try {
-        await _musicPlayer.stop();
-      } catch (error) {
-        debugPrint('Could not stop muted music: $error');
-      }
-      return;
-    }
-
-    if (!mounted || isPaused || completed || gameEnded) return;
-
-    try {
-      await _musicPlayer.stop();
-      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
-      await _musicPlayer.setVolume(musicVolume);
-      await _musicPlayer.play(
-        AssetSource('sounds/The_Shape_of_Thought.mp3'),
-        volume: musicVolume,
-      );
-      _musicStoppedForMute = false;
-    } catch (error) {
-      debugPrint('Could not play background music: $error');
-    }
-  }
-
-  Future<void> changeMusicVolume(double value) async {
-    final double volume = value.clamp(0.0, 1.0).toDouble();
+    await audio.init();
     if (!mounted) return;
-
-    setState(() => musicVolume = volume);
-
-    try {
-      if (volume <= 0.0) {
-        _musicStoppedForMute = true;
-        await _musicPlayer.stop();
-      } else if (_musicStoppedForMute) {
-        if (!isPaused && !completed && !gameEnded) {
-          await _startBackgroundMusic();
-        }
-      } else {
-        await _musicPlayer.setVolume(volume);
-      }
-    } catch (error) {
-      debugPrint('Could not change music volume: $error');
-    }
-  }
-
-  Future<void> changeSoundVolume(double value) async {
-    final double volume = value.clamp(0.0, 1.0).toDouble();
-    if (!mounted) return;
-
-    setState(() => soundVolume = volume);
-
-    try {
-      await audioPlayer.setVolume(volume);
-    } catch (error) {
-      debugPrint('Could not change sound volume: $error');
-    }
-  }
-
-  void showGameOptions() {
-    if (!mounted) return;
-    setState(() => showOptions = true);
+    await audio.startMusic();
   }
 
   // ============================================================
@@ -280,14 +187,12 @@ class _MemoryMatchState extends State<MemoryMatch>
     timer?.cancel();
     pairCheckTimer?.cancel();
 
-    audioPlayer.stop();
-    _musicPlayer.stop();
-
     setState(() {
       startNewGame();
     });
 
-    _startBackgroundMusic();
+    audio.stopEffects();
+    audio.startMusic();
   }
 
   // ============================================================
@@ -300,8 +205,7 @@ class _MemoryMatchState extends State<MemoryMatch>
     timer?.cancel();
     pairCheckTimer?.cancel();
 
-    audioPlayer.pause();
-    _musicPlayer.pause();
+    audio.pauseAll();
 
     setState(() {
       isPaused = true;
@@ -317,26 +221,9 @@ class _MemoryMatchState extends State<MemoryMatch>
       showOptions = false;
     });
 
-    try {
-      await audioPlayer.setVolume(soundVolume);
-      await audioPlayer.resume();
-    } catch (error) {
-      debugPrint('Could not resume sound effects: $error');
-    }
+    await audio.resume();
 
-    if (musicVolume > 0.0) {
-      if (_musicStoppedForMute) {
-        await _startBackgroundMusic();
-      } else {
-        try {
-          await _musicPlayer.setVolume(musicVolume);
-          await _musicPlayer.resume();
-        } catch (error) {
-          debugPrint('Could not resume background music: $error');
-          await _startBackgroundMusic();
-        }
-      }
-    }
+    if (!mounted) return;
 
     if (previewing) {
       startPreview();
@@ -412,7 +299,7 @@ class _MemoryMatchState extends State<MemoryMatch>
 
           _shakeController.forward(from: 0.0);
 
-          playWrongSound();
+          audio.playWrong();
 
           endGame(false);
         }
@@ -468,18 +355,18 @@ class _MemoryMatchState extends State<MemoryMatch>
 
     pairCheckTimer?.cancel();
 
-    // Determine the result immediately so the sound matches the player's move.
-    // The 700 ms timer below only keeps both cards visible briefly before hiding
-    // a mismatch or locking in a match.
+    // Determine the result immediately so the sound matches the move.
+    // The 700 ms timer below only keeps both cards visible briefly before
+    // hiding a mismatch or locking in a match.
     final int firstIndex = firstSelectedIndex!;
     final int secondIndex = secondSelectedIndex!;
     final bool isMatch = cards[firstIndex] == cards[secondIndex];
 
     if (playFeedback) {
       if (isMatch) {
-        playCorrectSound();
+        audio.playCorrect();
       } else {
-        playWrongSound();
+        audio.playWrong();
       }
     }
 
@@ -576,7 +463,7 @@ class _MemoryMatchState extends State<MemoryMatch>
 
     timer?.cancel();
     pairCheckTimer?.cancel();
-    _musicPlayer.stop();
+    audio.stopMusic();
 
     if (win) {
       calculateResults();
@@ -585,7 +472,7 @@ class _MemoryMatchState extends State<MemoryMatch>
 
       confettiController.play();
 
-      playCompleteSound();
+      audio.playComplete();
     } else {
       score = 0;
       xp = 0;
@@ -619,30 +506,6 @@ class _MemoryMatchState extends State<MemoryMatch>
       debugPrint('Error saving Memory Match score: $e');
     }
   }
-
-  // ============================================================
-  // SOUNDS
-  // ============================================================
-
-  Future<void> _playSound(String assetName) async {
-    if (soundVolume <= 0.0 || !mounted) return;
-
-    try {
-      // Play immediately; stopping the player first added avoidable latency.
-      await audioPlayer.play(
-        AssetSource(assetName),
-        volume: soundVolume,
-      );
-    } catch (e) {
-      debugPrint('Audio error: $e');
-    }
-  }
-
-  void playCorrectSound() => _playSound('sounds/correct.mp3');
-
-  void playWrongSound() => _playSound('sounds/wrong.mp3');
-
-  void playCompleteSound() => _playSound('sounds/level up.mp3');
 
   // ============================================================
   // NAVIGATION
@@ -722,7 +585,6 @@ class _MemoryMatchState extends State<MemoryMatch>
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const SizedBox(width: 48),
-            
             Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: 16,
@@ -1233,167 +1095,6 @@ class _MemoryMatchState extends State<MemoryMatch>
   }
 
   // ============================================================
-  // OPTIONS SCREEN (audio controls)
-  // ============================================================
-
-  Widget _buildOptionsScreen() {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Color(0xFF4A0E4E),
-              Color(0xFF811252),
-              Color(0xFF2E0854),
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(22),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 440),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B0B46).withOpacity(0.96),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: const Color(0xFFFFD700),
-                      width: 3,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black45,
-                        blurRadius: 18,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '⚙️ OPTIONS',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFFFFD700),
-                          fontSize: 30,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Adjust your game audio',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.85),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      _buildOptionsVolumeSlider(
-                        title: '🎵 Background Music',
-                        value: musicVolume,
-                        onChanged: changeMusicVolume,
-                      ),
-                      const SizedBox(height: 22),
-                      _buildOptionsVolumeSlider(
-                        title: '🔊 Sound Effects',
-                        value: soundVolume,
-                        onChanged: changeSoundVolume,
-                      ),
-                      const SizedBox(height: 30),
-                      _buildChunkyButton(
-                        label: '← Back',
-                        icon: Icons.arrow_back_rounded,
-                        color: const Color(0xFFFFD700),
-                        onPressed: () {
-                          setState(() => showOptions = false);
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionsVolumeSlider({
-    required String title,
-    required double value,
-    required ValueChanged<double> onChanged,
-  }) {
-    final int percentage = (value * 100).round();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFFFD700).withOpacity(0.65),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Text(
-                '$percentage%',
-                style: const TextStyle(
-                  color: Color(0xFFFFD700),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: value,
-            min: 0.0,
-            max: 1.0,
-            divisions: 10,
-            activeColor: const Color(0xFFFFD700),
-            inactiveColor: Colors.white24,
-            onChanged: onChanged,
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
-              Text('MUTED', style: TextStyle(color: Colors.white54, fontSize: 10)),
-              Text('MAX', style: TextStyle(color: Colors.white54, fontSize: 10)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
   // BUILD
   // ============================================================
 
@@ -1434,15 +1135,18 @@ class _MemoryMatchState extends State<MemoryMatch>
               ],
             ),
 
-            // Pause menu and options screen
+            // Pause menu + shared options screen
             if (isPaused)
               Positioned.fill(
                 child: showOptions
-                    ? _buildOptionsScreen()
+                    ? GameOptionsMenu(
+                        audio: audio,
+                        onBack: () => setState(() => showOptions = false),
+                      )
                     : PauseMenu(
                         onResume: resumeGame,
                         onRestart: restartGame,
-                        onOptions: showGameOptions,
+                        onOptions: () => setState(() => showOptions = true),
                         onMainMenu: goToMainMenu,
                       ),
               ),
@@ -1480,8 +1184,7 @@ class _MemoryMatchState extends State<MemoryMatch>
     pairCheckTimer?.cancel();
 
     confettiController.dispose();
-    audioPlayer.dispose();
-    _musicPlayer.dispose();
+    audio.dispose();
     _shakeController.dispose();
 
     super.dispose();

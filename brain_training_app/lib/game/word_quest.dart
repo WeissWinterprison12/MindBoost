@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/audio_settings.dart';
 import '../widgets/pause_menu.dart';
 
 class WordPuzzle {
@@ -166,6 +167,12 @@ class _WordQuestGameState extends State<WordQuestGame>
   bool _isChecking = false;
   bool _isSaving = false;
   bool _saveFailed = false;
+  bool _showOptions = false;
+
+  // Audio settings shared with the other games.
+  double musicVolume = AudioSettings.defaultVolume;
+  double soundVolume = AudioSettings.defaultVolume;
+  bool _musicStoppedForMute = false;
 
   String _feedback = '';
   bool _lastAnswerCorrect = false;
@@ -187,7 +194,8 @@ class _WordQuestGameState extends State<WordQuestGame>
   int? _zoomedImage;
 
   late ConfettiController _confetti;
-  final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _player = AudioPlayer(); // Sound effects
+  final AudioPlayer _musicPlayer = AudioPlayer(); // Background music
 
   late AnimationController _shakeController;
 
@@ -210,6 +218,7 @@ class _WordQuestGameState extends State<WordQuestGame>
 
     _resetPuzzlePool();
     _loadNextPuzzle();
+    _initAudio();
     _startTimer();
   }
 
@@ -218,6 +227,7 @@ class _WordQuestGameState extends State<WordQuestGame>
     _timer?.cancel();
     _confetti.dispose();
     _player.dispose();
+    _musicPlayer.dispose();
     _shakeController.dispose();
     super.dispose();
   }
@@ -226,9 +236,110 @@ class _WordQuestGameState extends State<WordQuestGame>
   // AUDIO
   // ============================================================
 
+  Future<void> _initAudio() async {
+    try {
+      final settings = AudioSettings.instance;
+      await settings.initialize();
+      await settings.loadForCurrentUser();
+
+      if (!mounted) return;
+
+      setState(() {
+        musicVolume = settings.musicVolume;
+        soundVolume = settings.soundVolume;
+      });
+
+      await _player.setVolume(soundVolume);
+      await _startBackgroundMusic();
+    } catch (e) {
+      debugPrint('Could not initialize Word Quest audio: $e');
+    }
+  }
+
+  Future<void> _startBackgroundMusic() async {
+    if (musicVolume <= 0.0) {
+      _musicStoppedForMute = true;
+      await _musicPlayer.stop();
+      return;
+    }
+
+    try {
+      await _musicPlayer.stop();
+      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
+      await _musicPlayer.setVolume(musicVolume);
+      await _musicPlayer.play(
+        AssetSource('sounds/A_Measured_Resolve.mp3'),
+        volume: musicVolume,
+      );
+      _musicStoppedForMute = false;
+    } catch (e) {
+      debugPrint('Could not play Word Quest background music: $e');
+    }
+  }
+
+  Future<void> _resumeBackgroundMusic() async {
+    try {
+      if (musicVolume <= 0.0) {
+        await _musicPlayer.stop();
+        _musicStoppedForMute = true;
+      } else if (_musicStoppedForMute) {
+        if (_isPaused || _isFinished) return;
+        await _startBackgroundMusic();
+      } else {
+        await _musicPlayer.setVolume(musicVolume);
+        await _musicPlayer.resume();
+      }
+    } catch (e) {
+      debugPrint('Could not resume Word Quest music: $e');
+    }
+  }
+
+  Future<void> changeMusicVolume(double value) async {
+    final volume = value.clamp(0.0, 1.0).toDouble();
+    if (!mounted) return;
+
+    setState(() => musicVolume = volume);
+    await AudioSettings.instance.setMusicVolume(volume);
+
+    try {
+      if (volume <= 0.0) {
+        _musicStoppedForMute = true;
+        await _musicPlayer.stop();
+      } else if (_musicStoppedForMute) {
+        if (!_isPaused && !_isFinished) {
+          await _startBackgroundMusic();
+        }
+      } else {
+        await _musicPlayer.setVolume(volume);
+      }
+    } catch (e) {
+      debugPrint('Could not change Word Quest music volume: $e');
+    }
+  }
+
+  Future<void> changeSoundVolume(double value) async {
+    final volume = value.clamp(0.0, 1.0).toDouble();
+    if (!mounted) return;
+
+    setState(() => soundVolume = volume);
+    await AudioSettings.instance.setSoundVolume(volume);
+
+    try {
+      await _player.setVolume(volume);
+    } catch (e) {
+      debugPrint('Could not change Word Quest sound volume: $e');
+    }
+  }
+
+  void _showGameOptions() {
+    if (!mounted || !_isPaused) return;
+    setState(() => _showOptions = true);
+  }
+
   Future<void> _playSound(String assetName) async {
     try {
       await _player.stop();
+      await _player.setVolume(soundVolume);
       await _player.play(AssetSource(assetName));
     } catch (e) {
       debugPrint('Audio error: $e');
@@ -527,22 +638,30 @@ class _WordQuestGameState extends State<WordQuestGame>
   void _pauseGame() {
     if (_isFinished || _isPaused) return;
 
+    _timer?.cancel();
     _player.pause();
+    _musicPlayer.pause();
 
     setState(() {
       _isPaused = true;
+      _showOptions = false;
       _zoomedImage = null;
     });
   }
 
-  void _resumeGame() {
+  Future<void> _resumeGame() async {
     if (!mounted || !_isPaused) return;
 
     setState(() {
       _isPaused = false;
+      _showOptions = false;
     });
 
-    _player.resume();
+    try {
+      await _player.resume();
+    } catch (_) {}
+    await _resumeBackgroundMusic();
+    if (mounted && !_isFinished) _startTimer();
   }
 
   void _restartGame() {
@@ -557,6 +676,7 @@ class _WordQuestGameState extends State<WordQuestGame>
       _streak = 0;
       _bestStreak = 0;
       _isPaused = false;
+      _showOptions = false;
       _isFinished = false;
       _isChecking = false;
       _isSaving = false;
@@ -573,6 +693,7 @@ class _WordQuestGameState extends State<WordQuestGame>
     });
 
     _startTimer();
+    _resumeBackgroundMusic();
   }
 
   // ============================================================
@@ -591,6 +712,8 @@ class _WordQuestGameState extends State<WordQuestGame>
         _isSaving = true;
       });
     }
+
+    _musicPlayer.pause();
 
     if (_wordsSolved > 0) {
       _confetti.play();
@@ -644,6 +767,7 @@ class _WordQuestGameState extends State<WordQuestGame>
 
   void _returnToMenu() {
     _timer?.cancel();
+    _musicPlayer.stop();
     Navigator.of(context).pop();
   }
 
@@ -1532,6 +1656,139 @@ class _WordQuestGameState extends State<WordQuestGame>
     );
   }
 
+
+  // ============================================================
+  // OPTIONS SCREEN (matches Math Game)
+  // ============================================================
+
+  Widget _buildOptionsScreen() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF4A0E4E), Color(0xFF811252), Color(0xFF2E0854)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(22),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3B0B46).withOpacity(0.96),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: const Color(0xFFFFD700), width: 3),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black45, blurRadius: 18, offset: Offset(0, 8)),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '⚙️ OPTIONS',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Color(0xFFFFD700), fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 1.4),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Adjust your game audio',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 15, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 28),
+                      _buildOptionsVolumeSlider(title: '🎵 Background Music', value: musicVolume, onChanged: changeMusicVolume),
+                      const SizedBox(height: 22),
+                      _buildOptionsVolumeSlider(title: '🔊 Sound Effects', value: soundVolume, onChanged: changeSoundVolume),
+                      const SizedBox(height: 30),
+                      _buildOptionsButton(
+                        text: '← Back',
+                        onPressed: () => setState(() => _showOptions = false),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionsVolumeSlider({
+    required String title,
+    required double value,
+    required ValueChanged<double> onChanged,
+  }) {
+    final int percentage = (value * 100).round();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.65), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+              ),
+              Text('$percentage%', style: const TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.w900, fontSize: 17)),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: const Color(0xFFFFD700),
+              inactiveTrackColor: Colors.white24,
+              thumbColor: Colors.white,
+              overlayColor: const Color(0xFFFFD700).withOpacity(0.18),
+              trackHeight: 6,
+            ),
+            child: Slider(
+              value: value.clamp(0.0, 1.0).toDouble(),
+              min: 0.0,
+              max: 1.0,
+              divisions: 100,
+              label: '$percentage%',
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOptionsButton({required String text, required VoidCallback onPressed}) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 22),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFD700),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(color: Color(0xFFB8860B), offset: Offset(0, 5), blurRadius: 0)],
+        ),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Color(0xFF3B0B46), fontWeight: FontWeight.w900, fontSize: 17),
+        ),
+      ),
+    );
+  }
+
   // ============================================================
   // BUILD
   // ============================================================
@@ -1590,12 +1847,14 @@ class _WordQuestGameState extends State<WordQuestGame>
             // Pause menu
             if (_isPaused && !_isFinished)
               Positioned.fill(
-                child: PauseMenu(
-                  onResume: _resumeGame,
-                  onRestart: _restartGame,
-                  onOptions: () {},
-                  onMainMenu: _returnToMenu,
-                ),
+                child: _showOptions
+                    ? _buildOptionsScreen()
+                    : PauseMenu(
+                        onResume: _resumeGame,
+                        onRestart: _restartGame,
+                        onOptions: _showGameOptions,
+                        onMainMenu: _returnToMenu,
+                      ),
               ),
 
             // Confetti

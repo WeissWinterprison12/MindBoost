@@ -10,8 +10,8 @@ import '../game/math_game.dart';
 import '../game/science_puzzle.dart';
 import '../game/memory_match.dart';
 import '../game/pattern_sequence.dart';
-import '../game/memory_matrix.dart';
-import '../game/logic_detective.dart';
+import '../game/tile_matrix.dart';
+import '../game/case_detective.dart';
 import '../game/path_finder.dart';
 import '../game/word_quest.dart';
 import '../services/menu_music.dart';
@@ -266,7 +266,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         Color(0xFF0072FF),
                       ],
                       borderColor: const Color(0xFF0052B4),
-                      starsEarned: 3,
+                      starsEarned: 1,
                       unlocked: true,
                       page: const MathGame(),
                     ),
@@ -281,7 +281,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         Color(0xFF38EF7D),
                       ],
                       borderColor: const Color(0xFF0C6B63),
-                      starsEarned: 3,
+                      starsEarned: 1,
                       unlocked: true,
                       page: const SciencePuzzle(),
                     ),
@@ -296,7 +296,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         Color(0xFF4A00E0),
                       ],
                       borderColor: const Color(0xFF330099),
-                      starsEarned: 3,
+                      starsEarned: 2,
                       unlocked: true,
                       page: const MemoryMatch(),
                     ),
@@ -304,7 +304,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                     // Pattern Logic + Sequence Recall merged into one level.
                     GameLevelCard(
                       levelNum: '4',
-                      title: 'Pattern & Sequence',
+                      title: 'Pattern Logic',
                       subtitle: 'Logic & Recall',
                       icon: '🧠',
                       gradientColors: const [
@@ -319,7 +319,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
 
                     GameLevelCard(
                       levelNum: '5',
-                      title: 'Memory Matrix',
+                      title: 'Tile Matrix',
                       subtitle: 'Find the Mismatch',
                       icon: '🎯',
                       gradientColors: const [
@@ -327,14 +327,14 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         Color(0xFFFFD200),
                       ],
                       borderColor: const Color(0xFFB86B00),
-                      starsEarned: 0,
+                      starsEarned: 2,
                       unlocked: true,
                       page: const MemoryMatrix(),
                     ),
 
                     GameLevelCard(
                       levelNum: '6',
-                      title: 'Logic Detective',
+                      title: 'Case Detective',
                       subtitle: 'Solve the Mystery',
                       icon: '🔎',
                       gradientColors: const [
@@ -342,28 +342,13 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         Color(0xFFEAAFC8),
                       ],
                       borderColor: const Color(0xFF493078),
-                      starsEarned: 0,
+                      starsEarned: 3,
                       unlocked: true,
                       page: const LogicDetective(),
                     ),
 
                     GameLevelCard(
                       levelNum: '7',
-                      title: 'Path Finder',
-                      subtitle: 'Navigate the Maze',
-                      icon: '🧭',
-                      gradientColors: const [
-                        Color(0xFF39216C),
-                        Color(0xFF160B36),
-                      ],
-                      borderColor: const Color(0xFF64E7FF),
-                      starsEarned: 0,
-                      unlocked: true,
-                      page: const PathFinder(),
-                    ),
-
-                    GameLevelCard(
-                      levelNum: '8',
                       title: 'Word Quest',
                       subtitle: 'Four Pics, One Word',
                       icon: '🧩',
@@ -372,10 +357,26 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         Color(0xFF5146D8),
                       ],
                       borderColor: const Color(0xFF3730A3),
-                      starsEarned: 0,
+                      starsEarned: 3,
                       unlocked: true,
                       page: const WordQuestGame(),
                     ),
+
+                    GameLevelCard(
+                      levelNum: '8',
+                      title: 'Path Finder',
+                      subtitle: 'Navigate the Maze',
+                      icon: '🧭',
+                      gradientColors: const [
+                        Color(0xFF39216C),
+                        Color(0xFF160B36),
+                      ],
+                      borderColor: const Color(0xFF64E7FF),
+                      starsEarned: 3,
+                      unlocked: true,
+                      page: const PathFinder(),
+                    ),
+
                   ],
                 ),
               ),
@@ -901,17 +902,36 @@ class _GameLevelCardState extends State<GameLevelCard> {
                     const SizedBox(height: 6),
 
                     Row(
-                      children: List.generate(3, (index) {
-                        return Icon(
-                          index < widget.starsEarned
-                              ? Icons.star_rounded
-                              : Icons.star_outline_rounded,
-                          color: index < widget.starsEarned
-                              ? const Color(0xFFFFD700)
-                              : Colors.white54,
-                          size: 20,
-                        );
-                      }),
+                      children: [
+                        const Text(
+                          'Difficulty: ',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        ...List.generate(widget.starsEarned, (index) {
+                          return const Icon(
+                            Icons.star_rounded,
+                            color: Color(0xFFFFD700),
+                            size: 18,
+                          );
+                        }),
+                        const SizedBox(width: 6),
+                        Text(
+                          widget.starsEarned == 1
+                              ? 'Easy'
+                              : widget.starsEarned == 2
+                                  ? 'Medium'
+                                  : 'Hard',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

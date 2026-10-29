@@ -45,6 +45,9 @@ class MenuMusic with WidgetsBindingObserver {
   Future<void>? _loadingVolume;
   Timer? _saveTimer;
 
+  // The last non-zero volume, restored when the player un-mutes.
+  double _lastVolume = defaultVolume;
+
   // TEMPORARY SAFETY NET: if the menu song above cannot be loaded (wrong
   // file name, missing from pubspec.yaml...), this song is played instead
   // and the console explains why. Set it to '' once the menu song works.
@@ -90,6 +93,8 @@ class MenuMusic with WidgetsBindingObserver {
 
       if (saved != null) {
         volumeNotifier.value = saved.clamp(0.0, 1.0).toDouble();
+
+        if (volumeNotifier.value > 0) _lastVolume = volumeNotifier.value;
       }
 
       debugPrint(
@@ -106,6 +111,8 @@ class MenuMusic with WidgetsBindingObserver {
     final double newVolume = value.clamp(0.0, 1.0).toDouble();
 
     volumeNotifier.value = newVolume;
+
+    if (newVolume > 0) _lastVolume = newVolume;
 
     try {
       await _player.setVolume(newVolume);
@@ -124,6 +131,13 @@ class MenuMusic with WidgetsBindingObserver {
         debugPrint('[MenuMusic] could not save the volume: $error');
       }
     });
+  }
+
+  /// Tapping the music icon or "Mute all": 0% or back to the last level.
+  Future<void> toggleMute() {
+    return setVolume(
+      volume <= 0.0 ? (_lastVolume > 0 ? _lastVolume : defaultVolume) : 0.0,
+    );
   }
 
   /// Starts the music. Safe to call many times: if it is already

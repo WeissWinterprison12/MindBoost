@@ -2,14 +2,14 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
 import 'memory_match.dart';
+import '../services/game_audio.dart';
+import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
-import '../services/audio_settings.dart';
 
 class SciencePuzzle extends StatefulWidget {
   const SciencePuzzle({super.key});
@@ -54,13 +54,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   bool isPaused = false;
   bool showOptions = false;
 
-  // Match MathGame: both audio settings start at 50%.
-  double musicVolume = AudioSettings.defaultVolume;
-  double soundVolume = AudioSettings.defaultVolume;
-
-  bool _musicStoppedForMute = false;
-  bool _audioInitialized = false;
-
   int xp = 0;
   int score = 0;
   int streakCount = 0;
@@ -69,9 +62,10 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   late ConfettiController confetti;
 
-  // Separate players let the background music continue while effects play.
-  final AudioPlayer player = AudioPlayer();
-  final AudioPlayer _musicPlayer = AudioPlayer();
+  // Shared audio controller, with this game's own music.
+  final GameAudio audio = GameAudio(
+    musicAsset: 'sounds/The_Measured_Proof.mp3',
+  );
 
   late AnimationController _shakeController;
   late Animation<double> _shakeAnimation;
@@ -96,13 +90,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     _shakeAnimation = Tween<double>(
       begin: 0.0,
       end: 10.0,
-    )
-        .chain(
-          CurveTween(
-            curve: Curves.elasticIn,
-          ),
-        )
-        .animate(_shakeController);
+    ).chain(CurveTween(curve: Curves.elasticIn)).animate(_shakeController);
 
     _initAudio();
     startNewGame();
@@ -112,176 +100,24 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   // AUDIO
   // ============================================================
 
-  
-  // ============================================================
-  // AUDIO
-  // ============================================================
-
   Future<void> _initAudio() async {
-    try {
-      final settings = AudioSettings.instance;
-
-      await settings.initialize();
-      await settings.loadForCurrentUser();
-
-      if (!mounted) return;
-
-      setState(() {
-        musicVolume = settings.musicVolume;
-        soundVolume = settings.soundVolume;
-      });
-
-      await _configureAudio();
-
-      if (!mounted) return;
-
-      _audioInitialized = true;
-
-      await player.setVolume(soundVolume);
-      await _startBackgroundMusic();
-    } catch (error) {
-      debugPrint('Could not initialize puzzle audio: $error');
-    }
-  }
-
-  Future<void> _configureAudio() async {
-    final AudioContext audioContext = AudioContext(
-      iOS: AudioContextIOS(
-        category: AVAudioSessionCategory.playback,
-        options: {AVAudioSessionOptions.mixWithOthers},
-      ),
-      android: AudioContextAndroid(
-        audioFocus: AndroidAudioFocus.none,
-      ),
-    );
-
-    try {
-      await _musicPlayer.setAudioContext(audioContext);
-      await player.setAudioContext(audioContext);
-
-      await _musicPlayer.setVolume(musicVolume);
-      await player.setVolume(soundVolume);
-    } catch (error) {
-      debugPrint('Could not configure audio mixing: $error');
-    }
-  }
-
-  Future<void> _startBackgroundMusic() async {
-    if (musicVolume <= 0.0) {
-      _musicStoppedForMute = true;
-
-      try {
-        await _musicPlayer.stop();
-      } catch (error) {
-        debugPrint('Could not stop muted music: $error');
-      }
-
-      return;
-    }
-
-    if (!mounted || isPaused || completed || gameEnded) return;
-
-    try {
-      await _musicPlayer.stop();
-      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
-      await _musicPlayer.setVolume(musicVolume);
-
-      await _musicPlayer.play(
-        AssetSource('sounds/The_Measured_Proof.mp3'),
-        volume: musicVolume,
-      );
-
-      _musicStoppedForMute = false;
-    } catch (error) {
-      debugPrint('Could not play background music: $error');
-    }
-  }
-
-  Future<void> _playSound(String assetName) async {
-    if (soundVolume <= 0.0 || !_audioInitialized) return;
-
-    try {
-      await player.stop();
-      await player.setVolume(soundVolume);
-
-      await player.play(
-        AssetSource(assetName),
-        volume: soundVolume,
-      );
-    } catch (error) {
-      debugPrint('Audio error for $assetName: $error');
-    }
-  }
-
-  Future<void> changeMusicVolume(double value) async {
-    final double volume = value.clamp(0.0, 1.0).toDouble();
-
+    await audio.init();
     if (!mounted) return;
-
-    setState(() {
-      musicVolume = volume;
-    });
-
-    // Save the music preference for the signed-in Firebase account.
-    await AudioSettings.instance.setMusicVolume(volume);
-
-    try {
-      if (volume <= 0.0) {
-        _musicStoppedForMute = true;
-        await _musicPlayer.stop();
-      } else if (_musicStoppedForMute) {
-        if (!isPaused && !completed && !gameEnded) {
-          await _startBackgroundMusic();
-        }
-      } else {
-        await _musicPlayer.setVolume(volume);
-      }
-    } catch (error) {
-      debugPrint('Could not change music volume: $error');
-    }
+    await audio.startMusic();
   }
 
-  Future<void> changeSoundVolume(double value) async {
-    final double volume = value.clamp(0.0, 1.0).toDouble();
-
-    if (!mounted) return;
-
-    setState(() {
-      soundVolume = volume;
-    });
-
-    // Save the sound-effects preference for this account.
-    await AudioSettings.instance.setSoundVolume(volume);
-
-    try {
-      await player.setVolume(volume);
-    } catch (error) {
-      debugPrint('Could not change sound volume: $error');
-    }
-  }
-
-  void showGameOptions() {
-    if (!mounted) return;
-
-    setState(() {
-      showOptions = true;
-    });
-  }
-
+  // ============================================================
+  // GAME FLOW
+  // ============================================================
 
   void startNewGame() {
     timer?.cancel();
 
     final random = Random();
 
-    selectedImage =
-        puzzleImages[random.nextInt(puzzleImages.length)];
+    selectedImage = puzzleImages[random.nextInt(puzzleImages.length)];
 
-    solved = List.generate(
-      totalPieces,
-      (index) => index,
-    );
-
+    solved = List.generate(totalPieces, (index) => index);
     pieces = List.from(solved);
 
     selectedPieceIndex = null;
@@ -295,6 +131,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     completed = false;
     gameEnded = false;
     isPaused = false;
+    showOptions = false;
 
     xp = 0;
     score = 0;
@@ -309,7 +146,8 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       startNewGame();
     });
 
-    _startBackgroundMusic();
+    audio.stopEffects();
+    audio.startMusic();
   }
 
   void pauseGame() {
@@ -317,8 +155,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
     timer?.cancel();
 
-    player.pause();
-    _musicPlayer.pause();
+    audio.pauseAll();
 
     setState(() {
       isPaused = true;
@@ -334,18 +171,9 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       showOptions = false;
     });
 
-    if (musicVolume <= 0.0) {
-      _musicStoppedForMute = true;
-      await _musicPlayer.stop();
-    } else if (_musicStoppedForMute) {
-      await _startBackgroundMusic();
-    } else {
-      await _musicPlayer.setVolume(musicVolume);
-      await _musicPlayer.resume();
-    }
+    await audio.resume();
 
-    await player.setVolume(soundVolume);
-    await player.resume();
+    if (!mounted) return;
 
     if (memorizing) {
       startMemory();
@@ -379,7 +207,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-
   void scramble() {
     do {
       pieces.shuffle(Random());
@@ -412,13 +239,9 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         if (gameSeconds <= 0) {
           t.cancel();
 
-          _shakeController.forward(
-            from: 0.0,
-          );
+          _shakeController.forward(from: 0.0);
 
-          _playSound(
-            'sounds/wrong.mp3',
-          );
+          audio.playWrong();
 
           endGame(false);
         }
@@ -427,10 +250,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   }
 
   void movePiece(int index) {
-    if (completed ||
-        gameEnded ||
-        memorizing ||
-        isPaused) {
+    if (completed || gameEnded || memorizing || isPaused) {
       return;
     }
 
@@ -439,9 +259,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       if (selectedPieceIndex == null) {
         selectedPieceIndex = index;
 
-        _playSound(
-          'sounds/pop.mp3',
-        );
+        audio.playSfx('pop.mp3');
 
         return;
       }
@@ -453,21 +271,16 @@ class _SciencePuzzleState extends State<SciencePuzzle>
       }
 
       // Swap pieces.
-      final temp =
-          pieces[selectedPieceIndex!];
+      final temp = pieces[selectedPieceIndex!];
 
-      pieces[selectedPieceIndex!] =
-          pieces[index];
-
+      pieces[selectedPieceIndex!] = pieces[index];
       pieces[index] = temp;
 
       moves++;
 
       selectedPieceIndex = null;
 
-      _playSound(
-        'sounds/click.mp3',
-      );
+      audio.playSfx('click.mp3');
     });
 
     checkSolved();
@@ -490,8 +303,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   }
 
   void calculateResults() {
-    final int timeUsed =
-        totalGameDuration - gameSeconds;
+    final int timeUsed = totalGameDuration - gameSeconds;
 
     int calculatedScore = 1000;
 
@@ -537,7 +349,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
     timer?.cancel();
 
-    _musicPlayer.stop();
+    audio.stopMusic();
 
     if (win) {
       calculateResults();
@@ -546,9 +358,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
       confetti.play();
 
-      _playSound(
-        'sounds/level up.mp3',
-      );
+      audio.playComplete();
     } else {
       xp = 0;
       score = 0;
@@ -564,9 +374,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   Future<void> saveScore(bool win) async {
     try {
-      await FirebaseFirestore.instance
-          .collection('scores')
-          .add({
+      await FirebaseFirestore.instance.collection('scores').add({
         'level': 'Science Puzzle',
         'image': selectedImage,
         'moves': moves,
@@ -577,9 +385,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         'timestamp': DateTime.now(),
       });
     } catch (e) {
-      debugPrint(
-        'Error saving score: $e',
-      );
+      debugPrint('Error saving score: $e');
     }
   }
 
@@ -591,11 +397,14 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            const MemoryMatch(),
+        builder: (context) => const MemoryMatch(),
       ),
     );
   }
+
+  // ============================================================
+  // UI HELPERS
+  // ============================================================
 
   Widget _buildChunkyButton({
     required String label,
@@ -609,36 +418,26 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         height: 50,
         decoration: BoxDecoration(
           color: color,
-          borderRadius:
-              BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: color.withValues(
-                alpha: 0.4,
-              ),
-              offset:
-                  const Offset(0, 4),
+              color: color.withValues(alpha: 0.4),
+              offset: const Offset(0, 4),
               blurRadius: 8,
             ),
           ],
         ),
         child: Row(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              color: Colors.white,
-              size: 20,
-            ),
+            Icon(icon, color: Colors.white, size: 20),
             const SizedBox(width: 8),
             Text(
               label,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 16,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
                 letterSpacing: 0.5,
               ),
             ),
@@ -651,48 +450,30 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   Widget _buildCustomAppBar() {
     return SafeArea(
       child: Padding(
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 8,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
-          mainAxisAlignment:
-              MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const SizedBox(width: 48),
-
             Container(
-              padding:
-                  const EdgeInsets.symmetric(
+              padding: const EdgeInsets.symmetric(
                 horizontal: 16,
                 vertical: 8,
               ),
-              decoration:
-                  BoxDecoration(
-                color:
-                    Colors.white.withValues(
-                  alpha: 0.12,
-                ),
-                borderRadius:
-                    BorderRadius.circular(
-                  20,
-                ),
-                border: Border.all(
-                  color: Colors.white24,
-                ),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white24),
               ),
               child: const Text(
                 'Science Puzzle',
                 style: TextStyle(
                   color: Colors.white,
-                  fontWeight:
-                      FontWeight.bold,
+                  fontWeight: FontWeight.bold,
                   fontSize: 16,
                 ),
               ),
             ),
-
             IconButton(
               onPressed: pauseGame,
               icon: const Icon(
@@ -708,86 +489,50 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   }
 
   Widget buildPuzzlePiece(int index) {
-    final pieceNumber =
-        pieces[index];
+    final pieceNumber = pieces[index];
 
-    final row =
-        pieceNumber ~/ puzzleSize;
+    final row = pieceNumber ~/ puzzleSize;
+    final column = pieceNumber % puzzleSize;
 
-    final column =
-        pieceNumber % puzzleSize;
-
-    final isSelected =
-        selectedPieceIndex == index;
+    final isSelected = selectedPieceIndex == index;
 
     return GestureDetector(
       onTap: () {
         movePiece(index);
       },
       child: LayoutBuilder(
-        builder:
-            (context, constraints) {
-          final pieceWidth =
-              constraints.maxWidth;
-
-          final pieceHeight =
-              constraints.maxHeight;
+        builder: (context, constraints) {
+          final pieceWidth = constraints.maxWidth;
+          final pieceHeight = constraints.maxHeight;
 
           return AnimatedContainer(
-            duration:
-                const Duration(
-              milliseconds: 200,
-            ),
-            decoration:
-                BoxDecoration(
-              borderRadius:
-                  BorderRadius.circular(
-                8,
-              ),
+            duration: const Duration(milliseconds: 200),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: isSelected
-                    ? Colors.amber
-                    : Colors.white24,
-                width:
-                    isSelected ? 3.5 : 1,
+                color: isSelected ? Colors.amber : Colors.white24,
+                width: isSelected ? 3.5 : 1,
               ),
-              boxShadow:
-                  isSelected
-                      ? [
-                          BoxShadow(
-                            color:
-                                Colors.amber
-                                    .withValues(
-                              alpha: 0.6,
-                            ),
-                            blurRadius: 10,
-                            spreadRadius: 2,
-                          ),
-                        ]
-                      : [],
+              boxShadow: isSelected
+                  ? [
+                      BoxShadow(
+                        color: Colors.amber.withValues(alpha: 0.6),
+                        blurRadius: 10,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : [],
             ),
             child: ClipRRect(
-              borderRadius:
-                  BorderRadius.circular(
-                6,
-              ),
+              borderRadius: BorderRadius.circular(6),
               child: Stack(
                 children: [
                   Positioned(
-                    left:
-                        -column *
-                            pieceWidth,
-                    top:
-                        -row *
-                            pieceHeight,
-                    width:
-                        pieceWidth *
-                            puzzleSize,
-                    height:
-                        pieceHeight *
-                            puzzleSize,
-                    child:
-                        Image.asset(
+                    left: -column * pieceWidth,
+                    top: -row * pieceHeight,
+                    width: pieceWidth * puzzleSize,
+                    height: pieceHeight * puzzleSize,
+                    child: Image.asset(
                       selectedImage,
                       fit: BoxFit.fill,
                     ),
@@ -804,217 +549,112 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   Widget buildResultScreen() {
     final bool passed = xp > 0;
 
-    final int timeUsed =
-        totalGameDuration -
-            gameSeconds;
+    final int timeUsed = totalGameDuration - gameSeconds;
 
     return Center(
       child: SingleChildScrollView(
-        physics:
-            const BouncingScrollPhysics(),
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 12,
-        ),
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: ClipRRect(
-          borderRadius:
-              BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(24),
           child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: 10,
-              sigmaY: 10,
-            ),
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(
+              padding: const EdgeInsets.symmetric(
                 horizontal: 20,
                 vertical: 20,
               ),
-              decoration:
-                  BoxDecoration(
-                color:
-                    Colors.white.withValues(
-                  alpha: 0.12,
-                ),
-                borderRadius:
-                    BorderRadius.circular(
-                  24,
-                ),
-                border: Border.all(
-                  color: Colors.white24,
-                ),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white24),
               ),
               child: Column(
-                mainAxisSize:
-                    MainAxisSize.min,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    passed
-                        ? '🎉 LEVEL COMPLETE!'
-                        : '⏰ TIME IS UP!',
+                    passed ? '🎉 LEVEL COMPLETE!' : '⏰ TIME IS UP!',
                     style: TextStyle(
                       fontSize: 22,
-                      fontWeight:
-                          FontWeight.w900,
-                      color: passed
-                          ? Colors.amber
-                          : Colors.redAccent,
+                      fontWeight: FontWeight.w900,
+                      color: passed ? Colors.amber : Colors.redAccent,
                       letterSpacing: 1,
                     ),
-                    textAlign:
-                        TextAlign.center,
+                    textAlign: TextAlign.center,
                   ),
-
-                  const SizedBox(
-                    height: 8,
-                  ),
-
+                  const SizedBox(height: 8),
                   Text(
                     passed
                         ? 'Great job! You assembled the puzzle.'
                         : 'You ran out of time! Try again.',
-                    textAlign:
-                        TextAlign.center,
-                    style:
-                        const TextStyle(
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
                       fontSize: 14,
-                      color:
-                          Colors.white70,
+                      color: Colors.white70,
                     ),
                   ),
-
-                  const SizedBox(
-                    height: 16,
-                  ),
-
+                  const SizedBox(height: 16),
                   if (passed) ...[
                     Container(
-                      padding:
-                          const EdgeInsets
-                              .symmetric(
+                      padding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 6,
                       ),
-                      decoration:
-                          BoxDecoration(
-                        color: Colors.amber
-                            .withValues(
-                          alpha: 0.2,
-                        ),
-                        borderRadius:
-                            BorderRadius.circular(
-                          16,
-                        ),
-                        border:
-                            Border.all(
-                          color:
-                              Colors.amber,
-                        ),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.amber),
                       ),
                       child: Text(
                         'GRADE: ${getGrade()}',
-                        style:
-                            const TextStyle(
+                        style: const TextStyle(
                           fontSize: 24,
-                          fontWeight:
-                              FontWeight.w900,
-                          color:
-                              Colors.amber,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.amber,
                         ),
                       ),
                     ),
-
-                    const SizedBox(
-                      height: 16,
-                    ),
+                    const SizedBox(height: 16),
                   ],
-
                   Row(
-                    mainAxisAlignment:
-                        MainAxisAlignment
-                            .spaceEvenly,
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _buildStatBadge(
-                        '🏆 Score',
-                        '$score',
-                      ),
-                      _buildStatBadge(
-                        '⭐ XP',
-                        passed
-                            ? '+$xp'
-                            : '0',
-                      ),
-                      _buildStatBadge(
-                        '🧩 Moves',
-                        '$moves',
-                      ),
+                      _buildStatBadge('🏆 Score', '$score'),
+                      _buildStatBadge('⭐ XP', passed ? '+$xp' : '0'),
+                      _buildStatBadge('🧩 Moves', '$moves'),
                     ],
                   ),
-
-                  const SizedBox(
-                    height: 8,
-                  ),
-
+                  const SizedBox(height: 8),
                   Text(
                     '⏱ Time Used: ${timeUsed}s',
-                    style:
-                        const TextStyle(
-                      color:
-                          Colors.white70,
+                    style: const TextStyle(
+                      color: Colors.white70,
                       fontSize: 14,
-                      fontWeight:
-                          FontWeight.w600,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-
-                  const SizedBox(
-                    height: 20,
-                  ),
-
+                  const SizedBox(height: 20),
                   if (passed) ...[
                     _buildChunkyButton(
-                      label:
-                          'Next Level',
-                      icon: Icons
-                          .arrow_forward_rounded,
-                      color:
-                          const Color(
-                        0xFFFF9F1C,
-                      ),
-                      onPressed:
-                          goToNextLevel,
+                      label: 'Next Level',
+                      icon: Icons.arrow_forward_rounded,
+                      color: const Color(0xFFFF9F1C),
+                      onPressed: goToNextLevel,
                     ),
-
-                    const SizedBox(
-                      height: 10,
-                    ),
+                    const SizedBox(height: 10),
                   ],
-
                   _buildChunkyButton(
                     label: 'Try Again',
-                    icon: Icons
-                        .refresh_rounded,
-                    color:
-                        const Color(
-                      0xFF2EC4B6,
-                    ),
-                    onPressed:
-                        restartGame,
+                    icon: Icons.refresh_rounded,
+                    color: const Color(0xFF2EC4B6),
+                    onPressed: restartGame,
                   ),
-
-                  const SizedBox(
-                    height: 10,
-                  ),
-
+                  const SizedBox(height: 10),
                   _buildChunkyButton(
                     label: 'Main Menu',
-                    icon:
-                        Icons.home_rounded,
-                    color:
-                        Colors.white24,
-                    onPressed:
-                        goToMainMenu,
+                    icon: Icons.home_rounded,
+                    color: Colors.white24,
+                    onPressed: goToMainMenu,
                   ),
                 ],
               ),
@@ -1025,31 +665,20 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-  Widget _buildStatBadge(
-    String title,
-    String value,
-  ) {
+  Widget _buildStatBadge(String title, String value) {
     return Column(
       children: [
         Text(
           title,
-          style:
-              const TextStyle(
-            color: Colors.white60,
-            fontSize: 13,
-          ),
+          style: const TextStyle(color: Colors.white60, fontSize: 13),
         ),
-        const SizedBox(
-          height: 4,
-        ),
+        const SizedBox(height: 4),
         Text(
           value,
-          style:
-              const TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 18,
-            fontWeight:
-                FontWeight.bold,
+            fontWeight: FontWeight.bold,
           ),
         ),
       ],
@@ -1063,74 +692,41 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     required Color valueColor,
   }) {
     return ClipRRect(
-      borderRadius:
-          BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(16),
       child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: 8,
-          sigmaY: 8,
-        ),
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(
-            horizontal: 14,
-            vertical: 10,
-          ),
-          decoration:
-              BoxDecoration(
-            color:
-                Colors.white.withValues(
-              alpha: 0.1,
-            ),
-            borderRadius:
-                BorderRadius.circular(
-              16,
-            ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color:
-                  Colors.white.withValues(
-                alpha: 0.18,
-              ),
+              color: Colors.white.withValues(alpha: 0.18),
             ),
           ),
           child: Column(
             children: [
               Row(
                 children: [
-                  Icon(
-                    icon,
-                    color:
-                        Colors.white70,
-                    size: 14,
-                  ),
-                  const SizedBox(
-                    width: 4,
-                  ),
+                  Icon(icon, color: Colors.white70, size: 14),
+                  const SizedBox(width: 4),
                   Text(
                     title,
-                    style:
-                        const TextStyle(
-                      color:
-                          Colors.white60,
+                    style: const TextStyle(
+                      color: Colors.white60,
                       fontSize: 11,
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
-
-              const SizedBox(
-                height: 4,
-              ),
-
+              const SizedBox(height: 4),
               Text(
                 value,
                 style: TextStyle(
                   color: valueColor,
                   fontSize: 16,
-                  fontWeight:
-                      FontWeight.w900,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
             ],
@@ -1142,145 +738,92 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   Widget _buildGameplay() {
     return LayoutBuilder(
-      builder:
-          (context, constraints) {
+      builder: (context, constraints) {
         return Padding(
-          padding:
-              const EdgeInsets.symmetric(
-            horizontal: 12,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Column(
             children: [
-              // -----------------------------
               // HUD
-              // -----------------------------
-
               Row(
-                mainAxisAlignment:
-                    MainAxisAlignment
-                        .spaceEvenly,
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _buildHudCard(
-                    icon:
-                        Icons.timer_outlined,
+                    icon: Icons.timer_outlined,
                     title: 'TIME',
                     value: memorizing
                         ? '${memorySeconds}s'
                         : '${gameSeconds}s',
-                    valueColor: memorizing
-                        ? Colors.amber
-                        : Colors.cyanAccent,
+                    valueColor:
+                        memorizing ? Colors.amber : Colors.cyanAccent,
                   ),
                   _buildHudCard(
-                    icon:
-                        Icons.grid_view_rounded,
+                    icon: Icons.grid_view_rounded,
                     title: 'MOVES',
                     value: '$moves',
-                    valueColor:
-                        Colors.purpleAccent,
+                    valueColor: Colors.purpleAccent,
                   ),
                   _buildHudCard(
-                    icon: Icons
-                        .local_fire_department,
+                    icon: Icons.local_fire_department,
                     title: 'STREAK',
-                    value:
-                        '$streakCount',
-                    valueColor:
-                        Colors.orangeAccent,
+                    value: '$streakCount',
+                    valueColor: Colors.orangeAccent,
                   ),
                 ],
               ),
 
-              const SizedBox(
-                height: 12,
-              ),
+              const SizedBox(height: 12),
 
-              // -----------------------------
               // MAIN PUZZLE AREA
-              // -----------------------------
-
               Expanded(
                 child: LayoutBuilder(
-                  builder:
-                      (context, area) {
-                    final availableWidth =
-                        area.maxWidth;
-
-                    final availableHeight =
-                        area.maxHeight;
+                  builder: (context, area) {
+                    final availableWidth = area.maxWidth;
+                    final availableHeight = area.maxHeight;
 
                     final maxPuzzleSize = min(
                       availableWidth * 0.98,
                       availableHeight * 0.98,
                     );
 
-                    final puzzleSizeValue = min(
-                      maxPuzzleSize,
-                      410.0,
-                    );
+                    final puzzleSizeValue = min(maxPuzzleSize, 410.0);
 
                     return Center(
                       child: Column(
-                        mainAxisSize:
-                            MainAxisSize.min,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             memorizing
                                 ? 'MEMORIZE THE IMAGE'
                                 : 'SOLVE THE PUZZLE',
-                            style:
-                                TextStyle(
-                              fontSize:
-                                  memorizing
-                                      ? 20
-                                      : 20,
-                              fontWeight:
-                                  FontWeight.w900,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
                               color: memorizing
-                                  ? Colors
-                                      .amber
-                                  : Colors
-                                      .cyanAccent,
-                              letterSpacing:
-                                  1.2,
+                                  ? Colors.amber
+                                  : Colors.cyanAccent,
+                              letterSpacing: 1.2,
                             ),
-                            textAlign:
-                                TextAlign.center,
+                            textAlign: TextAlign.center,
                           ),
-
-                          const SizedBox(
-                            height: 10,
-                          ),
-
+                          const SizedBox(height: 10),
                           SizedBox(
-                            width:
-                                puzzleSizeValue,
-                            height:
-                                puzzleSizeValue,
-                            child:
-                                memorizing
-                                    ? _buildMemoryImage()
-                                    : _buildPuzzleGrid(),
+                            width: puzzleSizeValue,
+                            height: puzzleSizeValue,
+                            child: memorizing
+                                ? _buildMemoryImage()
+                                : _buildPuzzleGrid(),
                           ),
-
-                          const SizedBox(
-                            height: 10,
-                          ),
-
+                          const SizedBox(height: 10),
                           Text(
                             memorizing
                                 ? 'Study the image carefully!'
                                 : 'Tap two pieces to swap them',
-                            style:
-                                const TextStyle(
-                              color:
-                                  Colors.white60,
+                            style: const TextStyle(
+                              color: Colors.white60,
                               fontSize: 13,
-                              fontWeight:
-                                  FontWeight.w500,
+                              fontWeight: FontWeight.w500,
                             ),
-                            textAlign:
-                                TextAlign.center,
+                            textAlign: TextAlign.center,
                           ),
                         ],
                       ),
@@ -1297,14 +840,9 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   Widget _buildMemoryImage() {
     return Container(
-      decoration:
-          BoxDecoration(
-        borderRadius:
-            BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white30,
-          width: 2,
-        ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white30, width: 2),
         boxShadow: const [
           BoxShadow(
             color: Colors.black45,
@@ -1314,8 +852,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         ],
       ),
       child: ClipRRect(
-        borderRadius:
-            BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(18),
         child: Image.asset(
           selectedImage,
           fit: BoxFit.cover,
@@ -1326,45 +863,36 @@ class _SciencePuzzleState extends State<SciencePuzzle>
 
   Widget _buildPuzzleGrid() {
     return Container(
-      padding:
-          const EdgeInsets.all(8),
-      decoration:
-          BoxDecoration(
-        color:
-            Colors.white.withValues(
-          alpha: 0.08,
-        ),
-        borderRadius:
-            BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white24,
-        ),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white24),
       ),
       child: GridView.builder(
         padding: EdgeInsets.zero,
-        physics:
-            const NeverScrollableScrollPhysics(),
-        gridDelegate:
-            const SliverGridDelegateWithFixedCrossAxisCount(
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: puzzleSize,
           crossAxisSpacing: 6,
           mainAxisSpacing: 6,
         ),
         itemCount: totalPieces,
-        itemBuilder:
-            (context, index) {
-          return buildPuzzlePiece(
-            index,
-          );
+        itemBuilder: (context, index) {
+          return buildPuzzlePiece(index);
         },
       ),
     );
   }
 
-  Widget _buildOptionsScreen() {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
@@ -1372,171 +900,8 @@ class _SciencePuzzleState extends State<SciencePuzzle>
               Color(0xFF811252),
               Color(0xFF2E0854),
             ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(22),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 440),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B0B46).withOpacity(0.96),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: const Color(0xFFFFD700),
-                      width: 3,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black45,
-                        blurRadius: 18,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '⚙️ OPTIONS',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFFFFD700),
-                          fontSize: 30,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Adjust your game audio',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.85),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      _buildOptionsVolumeSlider(
-                        title: '🎵 Background Music',
-                        value: musicVolume,
-                        onChanged: changeMusicVolume,
-                      ),
-                      const SizedBox(height: 22),
-                      _buildOptionsVolumeSlider(
-                        title: '🔊 Sound Effects',
-                        value: soundVolume,
-                        onChanged: changeSoundVolume,
-                      ),
-                      const SizedBox(height: 30),
-                      _buildChunkyButton(
-                        label: '← Back',
-                        icon: Icons.arrow_back_rounded,
-                        color: const Color(0xFFFFD700),
-                        onPressed: () {
-                          setState(() => showOptions = false);
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionsVolumeSlider({
-    required String title,
-    required double value,
-    required ValueChanged<double> onChanged,
-  }) {
-    final int percentage = (value * 100).round();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFFFD700).withOpacity(0.65),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              Text(
-                '$percentage%',
-                style: const TextStyle(
-                  color: Color(0xFFFFD700),
-                  fontWeight: FontWeight.w900,
-                  fontSize: 17,
-                ),
-              ),
-            ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: const Color(0xFFFFD700),
-              inactiveTrackColor: Colors.white24,
-              thumbColor: Colors.white,
-              overlayColor: const Color(0xFFFFD700).withOpacity(0.18),
-              trackHeight: 6,
-            ),
-            child: Slider(
-              value: value.clamp(0.0, 1.0),
-              min: 0.0,
-              max: 1.0,
-              divisions: 100,
-              label: '$percentage%',
-              onChanged: onChanged,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    return Scaffold(
-      body: Container(
-        decoration:
-            const BoxDecoration(
-          gradient:
-              LinearGradient(
-            colors: [
-              Color(0xFF4A0E4E),
-              Color(0xFF811252),
-              Color(0xFF2E0854),
-            ],
-            begin:
-                Alignment.topLeft,
-            end:
-                Alignment.bottomRight,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
         child: Stack(
@@ -1544,53 +909,44 @@ class _SciencePuzzleState extends State<SciencePuzzle>
             Column(
               children: [
                 _buildCustomAppBar(),
-
                 Expanded(
                   child: AnimatedBuilder(
-                    animation:
-                        _shakeAnimation,
-                    builder:
-                        (context, child) {
-                      return Transform
-                          .translate(
-                        offset: Offset(
-                          _shakeAnimation
-                              .value,
-                          0,
-                        ),
+                    animation: _shakeAnimation,
+                    builder: (context, child) {
+                      return Transform.translate(
+                        offset: Offset(_shakeAnimation.value, 0),
                         child: child,
                       );
                     },
-                    child: completed
-                        ? buildResultScreen()
-                        : _buildGameplay(),
+                    child:
+                        completed ? buildResultScreen() : _buildGameplay(),
                   ),
                 ),
               ],
             ),
 
+            // Pause menu + shared options screen
             if (isPaused)
               Positioned.fill(
                 child: showOptions
-                    ? _buildOptionsScreen()
+                    ? GameOptionsMenu(
+                        audio: audio,
+                        onBack: () => setState(() => showOptions = false),
+                      )
                     : PauseMenu(
                         onResume: resumeGame,
                         onRestart: restartGame,
-                        onOptions: showGameOptions,
+                        onOptions: () => setState(() => showOptions = true),
                         onMainMenu: goToMainMenu,
                       ),
               ),
 
+            // Confetti
             Align(
-              alignment:
-                  Alignment.topCenter,
-              child:
-                  ConfettiWidget(
-                confettiController:
-                    confetti,
-                blastDirectionality:
-                    BlastDirectionality
-                        .explosive,
+              alignment: Alignment.topCenter,
+              child: ConfettiWidget(
+                confettiController: confetti,
+                blastDirectionality: BlastDirectionality.explosive,
                 shouldLoop: false,
                 colors: const [
                   Colors.green,
@@ -1613,10 +969,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     timer?.cancel();
 
     confetti.dispose();
-
-    player.dispose();
-    _musicPlayer.dispose();
-
+    audio.dispose();
     _shakeController.dispose();
 
     super.dispose();
