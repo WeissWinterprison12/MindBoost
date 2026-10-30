@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/audio_settings.dart';
 import '../widgets/pause_menu.dart';
+import '../services/score_identity.dart';
 
 class MathGame extends StatefulWidget {
   const MathGame({super.key});
@@ -783,6 +784,7 @@ class _MathGameState extends State<MathGame> {
                   : 'Guest Player';
 
       await FirebaseFirestore.instance.collection('scores').add({
+        ...await ScoreIdentity.fields(),
         'playerId': user?.uid ?? guestId,
         'playerName': name,
         'level': 1,

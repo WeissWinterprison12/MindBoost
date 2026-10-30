@@ -1,10 +1,10 @@
-
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../services/score_identity.dart';
+import '../widgets/player_avatar.dart';
 
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -14,19 +14,7 @@ class LeaderboardScreen extends StatefulWidget {
 }
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  static const int maxLeaderboardEntries = 15;
-  static const int totalQuestions = 10;
-
-  static const Map<int, String> levelNames = {
-    1: 'Math Game',
-    2: 'Science Puzzle',
-    3: 'Memory Match',
-    4: 'Pattern Sequence',
-    5: 'Tile Matrix',
-    6: 'Logic Detective',
-    7: 'Word Quest',
-    8: 'Path Finder',
-  };
+  static const int maxEntries = 15;
 
   static const List<String> rivalNames = [
     'PixelNinja',
@@ -46,460 +34,193 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     'AceSolver',
   ];
 
-  String playerId = 'guest-local';
-  String playerName = 'Guest Player';
+  static const Color gold = Color(0xFFFFD700);
 
-  bool identityLoaded = false;
-  int selectedLevel = 1;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _scores;
+
+  PlayerIdentity? _me;
 
   @override
   void initState() {
     super.initState();
-    loadPlayerIdentity();
+
+    _scores = FirebaseFirestore.instance.collection('scores').snapshots();
+
+    _loadMe();
   }
 
-  // ============================================================
-  // PLAYER IDENTITY
-  // ============================================================
-
-  Future<void> loadPlayerIdentity() async {
+  Future<void> _loadMe() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final user = FirebaseAuth.instance.currentUser;
-
-      String? guestId = prefs.getString('guest_player_id');
-
-      if (user == null && (guestId == null || guestId.isEmpty)) {
-        guestId = 'guest_${DateTime.now().microsecondsSinceEpoch}';
-        await prefs.setString('guest_player_id', guestId);
-      }
-
-      final savedName = prefs.getString('player_username')?.trim();
-      final displayName = user?.displayName?.trim();
-
+      final me = await ScoreIdentity.load();
       if (!mounted) return;
-
-      setState(() {
-        playerId = user?.uid ?? guestId ?? 'guest-local';
-
-        if (savedName != null && savedName.isNotEmpty) {
-          playerName = savedName;
-        } else if (displayName != null && displayName.isNotEmpty) {
-          playerName = displayName;
-        } else {
-          playerName = 'Guest Player';
-        }
-
-        identityLoaded = true;
-      });
-    } catch (error) {
-      debugPrint('Could not load player identity: $error');
-
-      if (mounted) {
-        setState(() {
-          identityLoaded = true;
-        });
-      }
+      setState(() => _me = me);
+    } catch (e) {
+      debugPrint('Could not load player identity: $e');
     }
   }
 
   // ============================================================
-  // FIRESTORE STREAM
+  // DATA
   // ============================================================
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> scoreStream(int level) {
-    return FirebaseFirestore.instance
-        .collection('scores')
-        .where('level', isEqualTo: level)
-        .snapshots();
-  }
-
-  int asInt(dynamic value) {
+  int _asInt(dynamic value) {
     if (value is num) return value.round();
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  double asDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0;
+  /// Simulated players so the board is never empty.
+  List<BoardEntry> _makeRivals() {
+    final random = Random(20261029);
+
+    return List.generate(rivalNames.length, (i) {
+      return BoardEntry(
+        playerId: 'sample_$i',
+        name: rivalNames[i],
+        avatar: i % kAvatarCount,
+        totalXp: 120 + random.nextInt(900),
+        plays: 6 + random.nextInt(25),
+        isYou: false,
+        isSample: true,
+      );
+    });
   }
 
-  // ============================================================
-  // SAMPLE PLAYERS
-  // These are simulated demo entries, not real players.
-  // ============================================================
+  int _compare(BoardEntry a, BoardEntry b) {
+    final byXp = b.totalXp.compareTo(a.totalXp);
+    if (byXp != 0) return byXp;
 
-  List<BoardEntry> makeRivals() {
-    final random = Random(20261029 + selectedLevel);
-    final entries = <BoardEntry>[];
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  }
 
-    for (int i = 0; i < rivalNames.length; i++) {
-      final correct = 7 + random.nextInt(4);
+  /// Adds up every score a player has saved, across all 8 games.
+  List<BoardEntry> _buildRanking(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final totals = <String, _Totals>{};
 
-      final score = selectedLevel == 1
-          ? correct * 100
-          : 400 + random.nextInt(601);
+    for (final doc in docs) {
+      final data = doc.data();
+      final id = data['playerId']?.toString() ?? '';
 
-      final xp = selectedLevel == 1
-          ? correct * 10 + random.nextInt(4) * 5
-          : 20 + random.nextInt(21);
+      if (id.isEmpty) continue; // older scores without a player
+
+      final t = totals.putIfAbsent(id, () => _Totals());
+
+      t.xp += _asInt(data['xp']);
+      t.plays++;
+
+      final name = data['playerName']?.toString().trim() ?? '';
+      if (name.isNotEmpty) t.name = name;
+
+      final avatar = data['avatar'];
+      if (avatar is int) t.avatar = avatar;
+    }
+
+    final entries = _makeRivals();
+
+    totals.forEach((id, t) {
+      final isYou = id == _me?.id;
+
+      final name = isYou ? _me!.name : (t.name.isEmpty ? 'Player' : t.name);
+
+      entries.removeWhere(
+        (e) => e.isSample && e.name.toLowerCase() == name.toLowerCase(),
+      );
 
       entries.add(
         BoardEntry(
-          playerId: 'sample_rival_$i',
-          name: rivalNames[i],
-          correct: correct,
-          score: score,
-          accuracy: correct * 10.0,
-          xp: xp,
-          isYou: false,
-          isSample: true,
+          playerId: id,
+          name: name,
+          avatar: (isYou ? _me!.avatar : t.avatar)
+              .clamp(0, kAvatarCount - 1),
+          totalXp: t.xp,
+          plays: t.plays,
+          isYou: isYou,
+          isSample: false,
         ),
       );
-    }
+    });
+
+    entries.sort(_compare);
 
     return entries;
   }
 
-  // ============================================================
-  // CONVERT A FIRESTORE DOCUMENT
-  // ============================================================
+  String _format(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
 
-  BoardEntry? entryFromDocument(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
-    final data = doc.data();
-    final id = data['playerId']?.toString() ?? '';
+    for (int i = 0; i < text.length; i++) {
+      if (i > 0 && (text.length - i) % 3 == 0) buffer.write(',');
+      buffer.write(text[i]);
+    }
 
-    if (id.isEmpty) return null;
-
-    final savedName = data['playerName']?.toString().trim();
-    final correct = asInt(data['correct']);
-
-    final accuracy = data['accuracy'] != null
-        ? asDouble(data['accuracy'])
-        : correct * 10.0;
-
-    final score = data['score'] != null
-        ? asInt(data['score'])
-        : correct * 100;
-
-    return BoardEntry(
-      playerId: id,
-      name: savedName != null && savedName.isNotEmpty
-          ? savedName
-          : (id == playerId ? playerName : 'Player'),
-      correct: correct.clamp(0, totalQuestions),
-      score: score,
-      accuracy: accuracy,
-      xp: asInt(data['xp']),
-      isYou: id == playerId,
-      isSample: false,
-    );
+    return buffer.toString();
   }
 
   // ============================================================
-  // SORTING
-  // Rank #1 is the highest result.
-  // Level 1: correct answers > XP > accuracy.
-  // Levels 2-8: score > XP.
-  // ============================================================
-
-  
-  int compareEntries(BoardEntry a, BoardEntry b) {
-    // Highest XP always ranks first.
-    final xpComparison = b.xp.compareTo(a.xp);
-    if (xpComparison != 0) return xpComparison;
-
-    // If XP is tied, rank the higher score first.
-    final scoreComparison = b.score.compareTo(a.score);
-    if (scoreComparison != 0) return scoreComparison;
-
-    // If both XP and score are tied, compare accuracy.
-    final accuracyComparison = b.accuracy.compareTo(a.accuracy);
-    if (accuracyComparison != 0) return accuracyComparison;
-
-    // Final tie-breaker: alphabetical order.
-    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-  }
-
-
-  // ============================================================
-  // BUILD TOP 15
-  // ============================================================
-
-  List<BoardEntry> buildLeaderboard(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
-    final Map<String, BoardEntry> bestByPlayer = {};
-
-    for (final doc in docs) {
-      final entry = entryFromDocument(doc);
-      if (entry == null) continue;
-
-      final previous = bestByPlayer[entry.playerId];
-
-      if (previous == null || compareEntries(entry, previous) < 0) {
-        bestByPlayer[entry.playerId] = entry;
-      }
-    }
-
-    final entries = makeRivals();
-
-    // Add each real player's best result.
-    for (final entry in bestByPlayer.values) {
-      entries.removeWhere(
-        (sample) =>
-            sample.isSample &&
-            sample.name.toLowerCase() == entry.name.toLowerCase(),
-      );
-
-      entries.add(entry);
-    }
-
-    entries.sort(compareEntries);
-
-    final topEntries = entries.take(maxLeaderboardEntries).toList();
-
-    // Include the current player even if outside the top 15.
-    // Their position is shown within this displayed list.
-    final personalBest = bestByPlayer[playerId];
-
-    if (personalBest != null &&
-        !topEntries.any((entry) => entry.isYou)) {
-      if (topEntries.isNotEmpty) {
-        topEntries.removeLast();
-      }
-
-      topEntries.add(personalBest);
-      topEntries.sort(compareEntries);
-    }
-
-    return topEntries;
-  }
-
-  // ============================================================
-  // MAIN UI
+  // BUILD
   // ============================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: const Text(
-          'LEADERBOARD',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1.5,
-          ),
-        ),
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: true,
-      ),
       body: Container(
         width: double.infinity,
         height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF7564B8),
-              Color(0xFF806BC4),
-              Color(0xFF5B4A98),
+              Color(0xFF4A0E4E),
+              Color(0xFF811252),
+              Color(0xFF2E0854),
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
         ),
         child: SafeArea(
-          child: !identityLoaded
-              ? const Center(
-                  child: CircularProgressIndicator(
-                    color: Color(0xFFFFD700),
-                  ),
-                )
-              : Column(
-                  children: [
-                    // HEADER AND LEVEL SELECTOR
-                    Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.25),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: const Color(0xFFFFD700).withOpacity(0.6),
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'MINDBOOST RANKINGS',
-                            style: TextStyle(
-                              color: Color(0xFFFFF176),
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.2,
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
+          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _scores,
+            builder: (context, snapshot) {
+              final bool loadError = snapshot.hasError;
 
-                          DropdownButtonFormField<int>(
-                            value: selectedLevel,
-                            isExpanded: true,
-                            dropdownColor: const Color(0xFF5B4A98),
-                            decoration: InputDecoration(
-                              labelText: 'Select Level',
-                              labelStyle: const TextStyle(
-                                color: Colors.white70,
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                  color: Colors.white30,
-                                ),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                  color: Color(0xFFFFD700),
-                                ),
-                              ),
-                            ),
-                            iconEnabledColor: Colors.white,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            items: levelNames.entries.map((entry) {
-                              return DropdownMenuItem<int>(
-                                value: entry.key,
-                                child: Text(
-                                  'LEVEL ${entry.key} • ${entry.value}',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: (level) {
-                              if (level == null) return;
+              final List<BoardEntry> ranking =
+                  (loadError || snapshot.data == null)
+                      ? (_makeRivals()..sort(_compare))
+                      : _buildRanking(snapshot.data!.docs);
 
-                              setState(() {
-                                selectedLevel = level;
-                              });
-                            },
-                          ),
-
-                          const SizedBox(height: 14),
-
-                          Text(
-                            'TOP $maxLeaderboardEntries PLAYERS',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1,
-                            ),
-                          ),
-
-                          const SizedBox(height: 4),
-
-                          Text(
-                            selectedLevel == 1
-                                ? ''
-                                : '',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // SELECTED LEVEL LEADERBOARD
-                    Expanded(
-                      child: StreamBuilder<
-                          QuerySnapshot<Map<String, dynamic>>>(
-                        stream: scoreStream(selectedLevel),
-                        builder: (context, snapshot) {
-                          if (snapshot.hasError) {
-                            return buildBoard(
-                              makeRivals()
-                                  .take(maxLeaderboardEntries)
-                                  .toList(),
-                              loadError: true,
-                            );
-                          }
-
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return buildBoard(
-                              makeRivals()
-                                  .take(maxLeaderboardEntries)
-                                  .toList(),
-                            );
-                          }
-
-                          return buildBoard(
-                            buildLeaderboard(snapshot.data?.docs ?? []),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
+              return _buildContent(ranking, loadError: loadError);
+            },
+          ),
         ),
       ),
     );
   }
 
-  // ============================================================
-  // LEADERBOARD LIST
-  // ============================================================
-
-  Widget buildBoard(
-    List<BoardEntry> entries, {
-    bool loadError = false,
+  Widget _buildContent(
+    List<BoardEntry> ranking, {
+    required bool loadError,
   }) {
-    final hasPersonalBest = entries.any((entry) => entry.isYou);
+    final int myIndex = ranking.indexWhere((e) => e.isYou);
+    final List<BoardEntry> top = ranking.take(maxEntries).toList();
 
     return Column(
       children: [
-        if (!hasPersonalBest)
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 4,
-            ),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: Text(
-              'Your place: Not ranked yet. Play ${levelNames[selectedLevel]} to save your score.',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-
+        _buildHeader(),
+        _buildTitle(),
+        const SizedBox(height: 14),
+        _buildMyRankCard(
+          myIndex >= 0 ? ranking[myIndex] : null,
+          myIndex >= 0 ? myIndex + 1 : null,
+        ),
+        const SizedBox(height: 14),
+        _buildSectionLabel(),
         if (loadError)
           const Padding(
-            padding: EdgeInsets.all(8),
+            padding: EdgeInsets.only(top: 6),
             child: Text(
-              'Could not load saved scores. Showing sample rivals.',
+              'Could not load saved scores. Showing sample players.',
               style: TextStyle(
                 color: Color(0xFFFF8A65),
                 fontSize: 12,
@@ -507,163 +228,487 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               ),
             ),
           ),
-
+        const SizedBox(height: 8),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
-            itemCount: entries.length,
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              final rank = index + 1;
-              final isYou = entry.isYou;
-
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: isYou
-                      ? const Color(0xFF38EF7D).withOpacity(0.25)
-                      : Colors.black.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isYou
-                        ? const Color(0xFF38EF7D)
-                        : rank <= 3
-                            ? const Color(0xFFFFD700).withOpacity(0.6)
-                            : Colors.white.withOpacity(0.15),
-                    width: isYou ? 2 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 36,
-                      child: Text(
-                        '#$rank',
-                        style: TextStyle(
-                          color: rank <= 3
-                              ? const Color(0xFFFFD700)
-                              : Colors.white70,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: isYou
-                          ? const Color(0xFF38EF7D)
-                          : Colors.white.withOpacity(0.15),
-                      child: Icon(
-                        isYou ? Icons.person : Icons.sports_esports,
-                        color: isYou
-                            ? const Color(0xFF003816)
-                            : Colors.white,
-                        size: 19,
-                      ),
-                    ),
-
-                    const SizedBox(width: 12),
-
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isYou ? '${entry.name} (You)' : entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-
-                          Text(
-                            selectedLevel == 1
-                                ? '${entry.correct}/$totalQuestions correct • ${entry.accuracy.toStringAsFixed(0)}% accuracy'
-                                : 'Score: ${entry.score}',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '${entry.xp} XP',
-                          style: const TextStyle(
-                            color: Color(0xFFFFF176),
-                            fontWeight: FontWeight.w900,
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-
-                        Text(
-                          isYou
-                              ? 'YOUR BEST'
-                              : entry.isSample
-                                  ? 'SAMPLE'
-                                  : 'PLAYER',
-                          style: TextStyle(
-                            color: isYou
-                                ? const Color(0xFF38EF7D)
-                                : Colors.white54,
-                            fontSize: 8,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            },
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.28),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+              physics: const BouncingScrollPhysics(),
+              itemCount: top.length,
+              itemBuilder: (context, index) {
+                return _buildRow(top[index], index + 1);
+              },
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(40, 14, 40, 16),
+          child: _ThreeDButton(
+            text: 'BACK',
+            icon: Icons.arrow_back_rounded,
+            onPressed: () => Navigator.pop(context),
           ),
         ),
       ],
     );
   }
+
+  // ------------------------------------------------------------
+  // HEADER
+  // ------------------------------------------------------------
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _roundButton(
+            icon: Icons.arrow_back_rounded,
+            onTap: () => Navigator.pop(context),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 8,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: gold, width: 2),
+            ),
+            child: const Text(
+              'LEADERBOARD',
+              style: TextStyle(
+                color: gold,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  Widget _roundButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF4081),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(color: Color(0xFF990033), offset: Offset(0, 4)),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(icon, color: Colors.white, size: 28),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTitle() {
+    return Column(
+      children: [
+        ShaderMask(
+          shaderCallback: (bounds) => const LinearGradient(
+            colors: [Color(0xFFFFF176), Color(0xFFFF8A65)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ).createShader(bounds),
+          child: const Text(
+            '🏆 TOP PLAYERS',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 30,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+              shadows: [
+                Shadow(
+                  color: Colors.black45,
+                  offset: Offset(2, 4),
+                  blurRadius: 6,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Text(
+          'Total XP earned across all 8 games',
+          style: TextStyle(
+            color: Color(0xFFE0E0E0),
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ------------------------------------------------------------
+  // MY RANK CARD
+  // ------------------------------------------------------------
+
+  Widget _buildMyRankCard(BoardEntry? entry, int? rank) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF3B0B46), Color(0xFF5B1A6B)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: gold, width: 2.5),
+        boxShadow: [
+          BoxShadow(
+            color: gold.withValues(alpha: 0.2),
+            blurRadius: 16,
+          ),
+          const BoxShadow(
+            color: Colors.black38,
+            offset: Offset(0, 5),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _avatar(entry?.avatar ?? _me?.avatar ?? 0, 54),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'YOUR RANK',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                Text(
+                  entry?.name ?? _me?.name ?? 'Player',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  entry == null
+                      ? 'Play a game to earn XP and get ranked!'
+                      : '${entry.plays} games played',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                rank == null ? '—' : '#$rank',
+                style: const TextStyle(
+                  color: gold,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              _xpPill(entry?.totalXp ?? 0),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionLabel() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(color: Colors.white24)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              'TOP $maxEntries PLAYERS',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+          const Expanded(child: Divider(color: Colors.white24)),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------
+  // LIST ROW
+  // ------------------------------------------------------------
+
+  Widget _buildRow(BoardEntry entry, int rank) {
+    final Color? medal = switch (rank) {
+      1 => gold,
+      2 => const Color(0xFFC9D1E3),
+      3 => const Color(0xFFCD7F32),
+      _ => null,
+    };
+
+    final bool isYou = entry.isYou;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: isYou
+            ? const Color(0xFF38EF7D).withValues(alpha: 0.2)
+            : Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isYou
+              ? const Color(0xFF38EF7D)
+              : (medal?.withValues(alpha: 0.8) ?? Colors.white12),
+          width: isYou || medal != null ? 2 : 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: medal ?? Colors.black.withValues(alpha: 0.35),
+              boxShadow: medal == null
+                  ? null
+                  : [
+                      BoxShadow(
+                        color: medal.withValues(alpha: 0.5),
+                        blurRadius: 8,
+                      ),
+                    ],
+            ),
+            child: Text(
+              '$rank',
+              style: TextStyle(
+                color: medal == null
+                    ? Colors.white70
+                    : const Color(0xFF3B0B46),
+                fontWeight: FontWeight.w900,
+                fontSize: 15,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          _avatar(entry.avatar, 42),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isYou ? '${entry.name} (You)' : entry.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+                Text(
+                  entry.isSample
+                      ? 'Sample player'
+                      : '${entry.plays} games played',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _xpPill(entry.totalXp),
+        ],
+      ),
+    );
+  }
+
+  Widget _avatar(int index, double size) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: gold, width: 2),
+      ),
+      child: CircleAvatar(
+        radius: size / 2,
+        backgroundColor: Colors.white,
+        child: PlayerAvatar(index: index, size: size),
+      ),
+    );
+  }
+
+  Widget _xpPill(int xp) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: gold.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.star_rounded, color: gold, size: 18),
+          const SizedBox(width: 4),
+          Text(
+            '${_format(xp)} XP',
+            style: const TextStyle(
+              color: Color(0xFFFFF176),
+              fontWeight: FontWeight.w900,
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ============================================================
-// LEADERBOARD ENTRY MODEL
+// HELPERS
 // ============================================================
+
+class _Totals {
+  int xp = 0;
+  int plays = 0;
+  String name = '';
+  int avatar = 0;
+}
 
 class BoardEntry {
   final String playerId;
   final String name;
-  final int correct;
-  final int score;
-  final double accuracy;
-  final int xp;
+  final int avatar;
+  final int totalXp;
+  final int plays;
   final bool isYou;
   final bool isSample;
 
   const BoardEntry({
     required this.playerId,
     required this.name,
-    required this.correct,
-    required this.score,
-    required this.accuracy,
-    required this.xp,
+    required this.avatar,
+    required this.totalXp,
+    required this.plays,
     required this.isYou,
     required this.isSample,
   });
+}
+
+class _ThreeDButton extends StatefulWidget {
+  final String text;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _ThreeDButton({
+    required this.text,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  @override
+  State<_ThreeDButton> createState() => _ThreeDButtonState();
+}
+
+class _ThreeDButtonState extends State<_ThreeDButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        widget.onPressed();
+      },
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        height: 54,
+        transform: Matrix4.translationValues(0, _pressed ? 4 : 0, 0),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF4081),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.8),
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF990033),
+              offset: Offset(0, _pressed ? 1 : 5),
+              blurRadius: 0,
+            ),
+            const BoxShadow(
+              color: Colors.black38,
+              offset: Offset(0, 6),
+              blurRadius: 8,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(widget.icon, color: Colors.white, size: 24),
+            const SizedBox(width: 8),
+            Text(
+              widget.text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
