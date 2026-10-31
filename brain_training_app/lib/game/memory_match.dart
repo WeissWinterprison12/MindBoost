@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/score_identity.dart';
 import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
@@ -524,23 +525,39 @@ class _MemoryMatchState extends State<MemoryMatch>
   // SAVE SCORE TO FIREBASE
   // ============================================================
 
+  
   Future<void> saveScore(bool win) async {
     try {
+      // Get the current player's identity.
+      final identityFields = await ScoreIdentity.fields();
+
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Memory Match',
+        // Shared player identity
+        ...identityFields,
+
+        // Level information
+        'level': 3,
+        'levelName': 'Memory Match',
         'difficulty': widget.difficulty.label,
+
+        // Game results
         'moves': moves,
         'matchedPairs': matchedPairs,
         'score': score,
         'xp': xp,
         'grade': win ? getGrade() : 'F',
         'completed': win,
-        'timestamp': DateTime.now(),
+
+        // Timestamp
+        'timestamp': FieldValue.serverTimestamp(),
       });
+
+      debugPrint('Memory Match score saved successfully.');
     } catch (e) {
       debugPrint('Error saving Memory Match score: $e');
     }
   }
+
 
   // ============================================================
   // NAVIGATION

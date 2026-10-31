@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/score_identity.dart';
 import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
@@ -328,11 +329,22 @@ class _PatternSequenceState extends State<PatternSequence>
     saveScore();
   }
 
+  
   Future<void> saveScore() async {
     try {
+      // Get the current player's identity.
+      final identityFields = await ScoreIdentity.fields();
+
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Pattern Logic',
+        // Shared player identity
+        ...identityFields,
+
+        // Level information
+        'level': 4,
+        'levelName': 'Pattern Logic',
         'difficulty': widget.difficulty.label,
+
+        // Game results
         'patternCorrect': patternCorrect,
         'patternTotal': questions.length,
         'correct': patternCorrect,
@@ -342,12 +354,17 @@ class _PatternSequenceState extends State<PatternSequence>
         'streak': bestStreak,
         'grade': getGrade(),
         'completed': passed,
-        'timestamp': DateTime.now(),
+
+        // Timestamp
+        'timestamp': FieldValue.serverTimestamp(),
       });
+
+      debugPrint('Pattern Logic score saved successfully.');
     } catch (e) {
       debugPrint('Error saving Pattern Logic score: $e');
     }
   }
+
 
   // ============================================================
   // UI HELPERS

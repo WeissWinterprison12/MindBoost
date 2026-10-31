@@ -5,14 +5,13 @@ import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/game_difficulty.dart';
 import 'memory_match.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
+import '../services/score_identity.dart';
 
 class SciencePuzzle extends StatefulWidget {
   final GameDifficulty difficulty;
@@ -299,38 +298,28 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     saveScore(win);
   }
 
+  
   Future<void> saveScore(bool win) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final user = FirebaseAuth.instance.currentUser;
-      String? guestId = prefs.getString('guest_player_id');
-
-      if (user == null && (guestId == null || guestId.isEmpty)) {
-        guestId = 'guest_${DateTime.now().microsecondsSinceEpoch}';
-        await prefs.setString('guest_player_id', guestId);
-      }
-
-      final savedName = prefs.getString('player_username')?.trim();
-      final displayName = user?.displayName?.trim();
-      final String playerName =
-          savedName != null && savedName.isNotEmpty
-              ? savedName
-              : displayName != null && displayName.isNotEmpty
-                  ? displayName
-                  : 'Guest Player';
+      final identityFields = await ScoreIdentity.fields();
 
       await FirebaseFirestore.instance.collection('scores').add({
-        'playerId': user?.uid ?? guestId,
-        'playerName': playerName,
+        ...identityFields,
+
+        // Level information
         'level': 2,
         'levelName': 'Science Puzzle',
         'difficulty': widget.difficulty.label,
+
+        // Game results
         'image': selectedImage,
         'moves': moves,
         'score': score,
         'xp': xp,
         'grade': win ? getGrade() : 'F',
         'completed': win,
+
+        // Timestamp
         'timestamp': FieldValue.serverTimestamp(),
       });
 
@@ -340,17 +329,13 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     }
   }
 
+
   void goToMainMenu() => Navigator.pop(context);
 
-  // NEXT LEVEL → Memory Match (same difficulty)
   void goToNextLevel() {
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
-        builder: (context) => MemoryMatch(
-          difficulty: widget.difficulty,
-        ),
-      ),
+      MaterialPageRoute(builder: (context) => const MemoryMatch()),
     );
   }
 
@@ -566,21 +551,21 @@ class _SciencePuzzleState extends State<SciencePuzzle>
                       ),
                     ),
                   const SizedBox(height: 20),
+                  if (passed) ...[
+                    _buildChunkyButton(
+                      label: 'Next Level',
+                      icon: Icons.arrow_forward_rounded,
+                      color: const Color(0xFFFF9F1C),
+                      onPressed: goToNextLevel,
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   _buildChunkyButton(
                     label: 'Try Again',
                     icon: Icons.refresh_rounded,
                     color: const Color(0xFF2EC4B6),
                     onPressed: restartGame,
                   ),
-                  if (passed) ...[
-                    const SizedBox(height: 10),
-                    _buildChunkyButton(
-                      label: 'Next Level',
-                      icon: Icons.arrow_forward_rounded,
-                      color: const Color(0xFFFFD700),
-                      onPressed: goToNextLevel,
-                    ),
-                  ],
                   const SizedBox(height: 10),
                   _buildChunkyButton(
                     label: 'Main Menu',

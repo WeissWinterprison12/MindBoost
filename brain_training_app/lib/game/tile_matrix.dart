@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
@@ -6,12 +7,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/score_identity.dart';
+import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
 
 class MemoryMatrix extends StatefulWidget {
-  const MemoryMatrix({super.key});
+  final GameDifficulty difficulty;
+
+  const MemoryMatrix({
+    super.key,
+    this.difficulty = GameDifficulty.medium,
+  });
 
   @override
   State<MemoryMatrix> createState() => _MemoryMatrixState();
@@ -22,16 +30,76 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // SETTINGS
   // ============================================================
 
-  static const int gameDuration = 30; // starting time (seconds)
-  static const int previewDuration = 3; // seconds the pattern is shown
-  static const int correctBonusSeconds = 5; // time added per completed round
-  static const int wrongPenaltySeconds = 5; // time removed per wrong tile
+  int get gameDuration {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 0;
+      case GameDifficulty.medium:
+        return 30;
+      case GameDifficulty.hard:
+        return 20;
+    }
+  }
 
-  // The grid is always 3 columns wide and grows downwards.
-  // 3 x 5 = 15 tiles is the largest grid.
+  int get previewDuration {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 5;
+      case GameDifficulty.medium:
+        return 3;
+      case GameDifficulty.hard:
+        return 2;
+    }
+  }
+
+  int get correctBonusSeconds {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 0;
+      case GameDifficulty.medium:
+        return 3;
+      case GameDifficulty.hard:
+        return 3;
+    }
+  }
+
+  int get wrongPenaltySeconds {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 0;
+      case GameDifficulty.medium:
+        return 5;
+      case GameDifficulty.hard:
+        return 7;
+    }
+  }
+
+  int get maxTilesToRemember {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 6;
+      case GameDifficulty.medium:
+        return 7;
+      case GameDifficulty.hard:
+        return 8;
+    }
+  }
+
+  int get maxRounds {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 5;
+      case GameDifficulty.medium:
+        return 7;
+      case GameDifficulty.hard:
+        return 10;
+    }
+  }
+
+  bool get hasTimer => widget.difficulty != GameDifficulty.easy;
+
   static const int gridColumns = 3;
   static const int maxGridRows = 5;
-  static const int maxTilesToRemember = 7;
 
   final Random random = Random();
 
@@ -50,8 +118,8 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // ============================================================
 
   int currentRound = 1;
-  int gameSeconds = gameDuration;
-  int previewSeconds = previewDuration;
+  int gameSeconds = 0;
+  int previewSeconds = 0;
 
   int roundsCompleted = 0;
   int wrongAttempts = 0;
@@ -96,7 +164,8 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     _resetGame();
     _generatePattern();
     _initAudio();
-    _startGameTimer();
+
+    // The timer starts only after the preview finishes.
     _startPreviewTimer();
   }
 
@@ -118,7 +187,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
   Future<void> _initAudio() async {
     await audio.init();
+
     if (!mounted) return;
+
     await audio.startMusic();
   }
 
@@ -128,6 +199,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
   void _resetGame() {
     currentRound = 1;
+
     gameSeconds = gameDuration;
     previewSeconds = previewDuration;
 
@@ -156,25 +228,52 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     _updateDifficulty();
   }
 
-  /// Rounds never end, but the grid stops growing at 15 tiles (3 x 5)
-  /// and the number of tiles to remember stops at [maxTilesToRemember].
+  /// Adjusts grid size and the number of stars according to difficulty.
   void _updateDifficulty() {
-    // Rounds 1-2: 3x3 (9 tiles)
-    // Rounds 3-4: 3x4 (12 tiles)
-    // Round 5+  : 3x5 (15 tiles, the maximum)
-    if (currentRound <= 2) {
-      gridRows = 3;
-    } else if (currentRound <= 4) {
-      gridRows = 4;
-    } else {
-      gridRows = maxGridRows;
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        // Easy: 3x3 for rounds 1-3, then 3x4.
+        if (currentRound <= 3) {
+          gridRows = 3;
+        } else {
+          gridRows = 4;
+        }
+        break;
+
+      case GameDifficulty.medium:
+        // Medium: 3x3, then 3x4, then 3x5.
+        if (currentRound <= 2) {
+          gridRows = 3;
+        } else if (currentRound <= 4) {
+          gridRows = 4;
+        } else {
+          gridRows = 5;
+        }
+        break;
+
+      case GameDifficulty.hard:
+        // Hard: reaches the 3x5 grid earlier.
+        if (currentRound == 1) {
+          gridRows = 3;
+        } else if (currentRound <= 3) {
+          gridRows = 4;
+        } else {
+          gridRows = 5;
+        }
+        break;
     }
 
-    // 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7 ...
+    // The number of stars increases every round.
+    // Easy:   3, 4, 5, 6, 6
+    // Medium: 3, 4, 5, 6, 7, 7, 7
+    // Hard:   3, 4, 5, 6, 7, 8, 8, 8, 8, 8
     tilesToRemember = min(
-      3 + (currentRound - 1) ~/ 2,
+      3 + currentRound - 1,
       maxTilesToRemember,
     );
+
+    // Make sure the number of stars never exceeds the grid size.
+    tilesToRemember = min(tilesToRemember, totalTiles);
   }
 
   void _generatePattern() {
@@ -186,6 +285,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
     selectedTiles = [];
     wrongTileIndex = null;
+
     previewSeconds = previewDuration;
     showingPattern = true;
   }
@@ -194,8 +294,14 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // TIMERS
   // ============================================================
 
+  /// Starts the countdown only during the player's answering phase.
+  /// Easy mode does not use a countdown.
   void _startGameTimer() {
     gameTimer?.cancel();
+
+    if (!hasTimer || gameEnded || isPaused || showingPattern) {
+      return;
+    }
 
     gameTimer = Timer.periodic(
       const Duration(seconds: 1),
@@ -205,7 +311,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
           return;
         }
 
-        if (isPaused) return;
+        if (isPaused || showingPattern) return;
 
         if (gameSeconds <= 1) {
           setState(() {
@@ -223,13 +329,22 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     );
   }
 
+  /// Reveals the stars first.
+  /// The countdown starts only after the stars disappear.
   void _startPreviewTimer() {
     previewTimer?.cancel();
+
+    // Always stop the countdown during the preview.
+    gameTimer?.cancel();
+
+    if (gameEnded || isPaused) return;
 
     if (previewSeconds <= 0) {
       setState(() {
         showingPattern = false;
       });
+
+      _startGameTimer();
       return;
     }
 
@@ -250,6 +365,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
             previewSeconds = 0;
             showingPattern = false;
           });
+
+          // Start the timer only after the pattern is hidden.
+          _startGameTimer();
         } else {
           setState(() {
             previewSeconds--;
@@ -274,7 +392,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
     if (selectedTiles.contains(index)) return;
 
-    // A wrong tile is an immediate mistake.
+    // Wrong tile immediately counts as a mistake.
     if (!highlightedTiles.contains(index)) {
       _handleWrongTile(index);
       return;
@@ -284,7 +402,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       selectedTiles.add(index);
     });
 
-    // Finding every tile completes the round automatically.
+    // Complete the round when all stars are found.
     if (selectedTiles.length == tilesToRemember) {
       _completeRound();
     }
@@ -293,35 +411,42 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   void _handleWrongTile(int index) {
     if (checkingAnswer || gameEnded) return;
 
+    // Pause the countdown during mistake feedback and preview.
+    gameTimer?.cancel();
+
     setState(() {
       wrongAttempts++;
       streak = 0;
 
-      // Time penalty for the mistake.
-      gameSeconds = max(0, gameSeconds - wrongPenaltySeconds);
+      if (hasTimer) {
+        gameSeconds = max(0, gameSeconds - wrongPenaltySeconds);
+      }
 
       wrongTileIndex = index;
       checkingAnswer = true;
       roundFeedback = true;
       lastRoundCorrect = false;
-      feedbackText = 'WRONG TILE!  •  -${wrongPenaltySeconds}s';
+
+      feedbackText = hasTimer
+          ? 'WRONG TILE!  •  -${wrongPenaltySeconds}s'
+          : 'WRONG TILE!  •  TRY AGAIN';
     });
 
     audio.playWrong();
 
     feedbackTimer?.cancel();
+
     feedbackTimer = Timer(
       const Duration(milliseconds: 800),
       () {
         if (!mounted || gameEnded) return;
 
-        // The penalty used up the remaining time.
-        if (gameSeconds <= 0) {
+        // End the game if the penalty used up the remaining time.
+        if (hasTimer && gameSeconds <= 0) {
           _endGame();
           return;
         }
 
-        // Retry the same round with a NEW pattern.
         setState(() {
           _generatePattern();
 
@@ -331,6 +456,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
           feedbackText = '';
         });
 
+        // Reveal the new pattern before restarting the timer.
         _startPreviewTimer();
       },
     );
@@ -339,9 +465,17 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   void _completeRound() {
     if (checkingAnswer || gameEnded) return;
 
+    // Stop the countdown during round-completion feedback.
+    gameTimer?.cancel();
+
     final nextStreak = streak + 1;
     final streakBonus = nextStreak % 3 == 0 ? 5 : 0;
     final earnedXp = 10 + streakBonus;
+
+    // Calculate the timer bonus without exceeding the maximum.
+    final addedSeconds = hasTimer
+        ? min(correctBonusSeconds, gameDuration - gameSeconds)
+        : 0;
 
     setState(() {
       checkingAnswer = true;
@@ -351,23 +485,38 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       roundsCompleted++;
       streak = nextStreak;
       bestStreak = max(bestStreak, streak);
+
       score += 100;
       xp += earnedXp;
 
-      // Time reward for the correct round.
-      gameSeconds += correctBonusSeconds;
+      if (hasTimer) {
+        // Timer can never exceed the difficulty's starting limit.
+        gameSeconds = min(
+          gameDuration,
+          gameSeconds + correctBonusSeconds,
+        );
+      }
 
-      feedbackText = '+$earnedXp XP  •  +${correctBonusSeconds}s';
+      feedbackText = hasTimer
+          ? '+$earnedXp XP  •  +${addedSeconds}s'
+          : '+$earnedXp XP';
     });
 
     audio.playCorrect();
 
     feedbackTimer?.cancel();
+
     feedbackTimer = Timer(
       const Duration(milliseconds: 800),
       () {
         if (!mounted || gameEnded) return;
-        _nextRound();
+
+        // End the game after the required number of rounds.
+        if (roundsCompleted >= maxRounds) {
+          _endGame();
+        } else {
+          _nextRound();
+        }
       },
     );
   }
@@ -375,8 +524,11 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   void _nextRound() {
     if (gameEnded || !mounted) return;
 
+    gameTimer?.cancel();
+
     setState(() {
       currentRound++;
+
       _updateDifficulty();
       _generatePattern();
 
@@ -386,6 +538,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       feedbackText = '';
     });
 
+    // Countdown stays stopped while the new pattern is visible.
     _startPreviewTimer();
   }
 
@@ -394,7 +547,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // ============================================================
 
   void _pauseGame() {
-    if (gameEnded || isPaused || checkingAnswer || roundFeedback) return;
+    if (gameEnded || isPaused || checkingAnswer || roundFeedback) {
+      return;
+    }
 
     previewTimer?.cancel();
     gameTimer?.cancel();
@@ -419,10 +574,12 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
     if (!mounted) return;
 
-    _startGameTimer();
-
     if (showingPattern) {
+      // Continue showing the remaining preview time.
       _startPreviewTimer();
+    } else {
+      // Resume the countdown only if the player is answering.
+      _startGameTimer();
     }
   }
 
@@ -462,20 +619,31 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
   Future<void> _saveScore() async {
     try {
+      final identityFields = await ScoreIdentity.fields();
+
       final attempts = roundsCompleted + wrongAttempts;
-      final accuracy = attempts == 0 ? 0.0 : (roundsCompleted / attempts) * 100;
+
+      final accuracy = attempts == 0
+          ? 0.0
+          : (roundsCompleted / attempts) * 100;
 
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Memory Matrix',
+        ...identityFields,
+        'level': 5,
+        'levelName': 'Memory Matrix',
+        'difficulty': widget.difficulty.label,
         'roundsCompleted': roundsCompleted,
+        'maxRounds': maxRounds,
         'wrongAttempts': wrongAttempts,
         'streak': bestStreak,
         'accuracy': accuracy,
         'score': score,
         'xp': xp,
-        'completed': true,
+        'completed': roundsCompleted >= maxRounds,
         'timestamp': FieldValue.serverTimestamp(),
       });
+
+      debugPrint('Memory Matrix score saved successfully.');
 
       if (mounted) {
         setState(() {
@@ -512,7 +680,8 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     });
 
     audio.startMusic();
-    _startGameTimer();
+
+    // The preview runs first; the timer starts afterward.
     _startPreviewTimer();
   }
 
@@ -520,6 +689,8 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     gameTimer?.cancel();
     previewTimer?.cancel();
     feedbackTimer?.cancel();
+
+    audio.stopMusic();
 
     Navigator.pop(context);
   }
@@ -574,7 +745,8 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // ============================================================
 
   Widget _buildCustomAppBar() {
-    final bool pauseDisabled = gameEnded || checkingAnswer || roundFeedback;
+    final bool pauseDisabled =
+        gameEnded || checkingAnswer || roundFeedback;
 
     return SafeArea(
       bottom: false,
@@ -585,7 +757,10 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
           children: [
             const SizedBox(width: 48),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(20),
@@ -632,11 +807,16 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 10,
+            ),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.18),
+              ),
             ),
             child: Column(
               children: [
@@ -683,15 +863,19 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       children: [
         _buildHudCard(
           icon: Icons.timer_outlined,
-          title: 'TIME',
-          value: '${gameSeconds}s',
-          valueColor: gameSeconds <= 10 ? Colors.redAccent : Colors.cyanAccent,
+          title: hasTimer ? 'TIME' : 'NO TIMER',
+          value: hasTimer ? '${gameSeconds}s' : '∞',
+          valueColor: hasTimer
+              ? (gameSeconds <= 10
+                  ? Colors.redAccent
+                  : Colors.cyanAccent)
+              : Colors.greenAccent,
         ),
         const SizedBox(width: 8),
         _buildHudCard(
           icon: Icons.grid_view_rounded,
           title: 'ROUND',
-          value: '$currentRound',
+          value: '$currentRound/$maxRounds',
           valueColor: Colors.purpleAccent,
         ),
         const SizedBox(width: 8),
@@ -760,7 +944,10 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
         decoration: BoxDecoration(
           color: tileColor,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor, width: 2),
+          border: Border.all(
+            color: borderColor,
+            width: 2,
+          ),
           boxShadow: active
               ? [
                   BoxShadow(
@@ -774,15 +961,16 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
           child: Icon(
             iconData,
             size: size * 0.42,
-            color: active ? const Color(0xFF4A0E4E) : Colors.white24,
+            color: active
+                ? const Color(0xFF4A0E4E)
+                : Colors.white24,
           ),
         ),
       ),
     );
   }
 
-  /// The grid always fits the space that is left on the screen,
-  /// even when it grows to the maximum of 15 tiles (3 x 5).
+  /// Grid automatically adjusts to the available screen space.
   Widget _buildGrid() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -796,19 +984,31 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
         final sizeByHeight =
             (constraints.maxHeight - spacing * (gridRows - 1)) / gridRows;
 
-        final tileSize = max(40.0, min(min(sizeByWidth, sizeByHeight), 100.0));
+        final tileSize = max(
+          40.0,
+          min(min(sizeByWidth, sizeByHeight), 100.0),
+        );
 
         final rowWidgets = <Widget>[];
 
         for (int row = 0; row < gridRows; row++) {
-          if (row > 0) rowWidgets.add(const SizedBox(height: spacing));
+          if (row > 0) {
+            rowWidgets.add(const SizedBox(height: spacing));
+          }
 
           final tilesInRow = <Widget>[];
 
           for (int col = 0; col < gridColumns; col++) {
-            if (col > 0) tilesInRow.add(const SizedBox(width: spacing));
+            if (col > 0) {
+              tilesInRow.add(const SizedBox(width: spacing));
+            }
 
-            tilesInRow.add(_buildTile(row * gridColumns + col, tileSize));
+            tilesInRow.add(
+              _buildTile(
+                row * gridColumns + col,
+                tileSize,
+              ),
+            );
           }
 
           rowWidgets.add(
@@ -830,11 +1030,12 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   }
 
   // ============================================================
-  // FEEDBACK (fixed height so the layout never jumps)
+  // FEEDBACK
   // ============================================================
 
   Widget _buildFeedback() {
-    final color = lastRoundCorrect ? Colors.greenAccent : Colors.redAccent;
+    final color =
+        lastRoundCorrect ? Colors.greenAccent : Colors.redAccent;
 
     return SizedBox(
       height: 36,
@@ -846,7 +1047,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: color.withValues(alpha: 0.6)),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.6),
+                ),
               ),
               child: Text(
                 feedbackText,
@@ -869,7 +1072,12 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, 0, 12, 12 + bottomInset),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        0,
+        12,
+        12 + bottomInset,
+      ),
       child: Column(
         children: [
           _buildHud(),
@@ -877,12 +1085,16 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
           const SizedBox(height: 12),
 
           Text(
-            showingPattern ? 'MEMORIZE THE TILES!' : 'YOUR TURN!',
+            showingPattern
+                ? 'MEMORIZE THE TILES!'
+                : 'YOUR TURN!',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w900,
-              color: showingPattern ? Colors.amber : Colors.cyanAccent,
+              color: showingPattern
+                  ? Colors.amber
+                  : Colors.cyanAccent,
               letterSpacing: 1.2,
             ),
           ),
@@ -916,7 +1128,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
           const SizedBox(height: 10),
 
-          Expanded(child: _buildGrid()),
+          Expanded(
+            child: _buildGrid(),
+          ),
 
           const SizedBox(height: 8),
 
@@ -935,7 +1149,10 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       children: [
         Text(
           title,
-          style: const TextStyle(color: Colors.white60, fontSize: 13),
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 13,
+          ),
         ),
         const SizedBox(height: 4),
         Text(
@@ -952,17 +1169,28 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
   Widget _buildResultScreen() {
     final bool playedWell = roundsCompleted > 0;
+    final bool completedAllRounds = roundsCompleted >= maxRounds;
+
     final attempts = roundsCompleted + wrongAttempts;
-    final accuracy = attempts == 0 ? 0.0 : (roundsCompleted / attempts) * 100;
+
+    final accuracy = attempts == 0
+        ? 0.0
+        : (roundsCompleted / attempts) * 100;
 
     return Center(
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 12,
+        ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(24),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            filter: ImageFilter.blur(
+              sigmaX: 10,
+              sigmaY: 10,
+            ),
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -974,24 +1202,52 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    playedWell ? '🎉 TIME\'S UP!' : '⏰ TIME\'S UP!',
+                    completedAllRounds
+                        ? '🏆 GAME COMPLETED!'
+                        : hasTimer
+                            ? '⏰ TIME\'S UP!'
+                            : '🎮 GAME ENDED!',
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
-                      color: playedWell ? Colors.amber : Colors.redAccent,
+                      color: completedAllRounds
+                          ? Colors.amber
+                          : playedWell
+                              ? Colors.amber
+                              : Colors.redAccent,
                       letterSpacing: 1,
                     ),
                     textAlign: TextAlign.center,
                   ),
+
                   const SizedBox(height: 8),
+
                   Text(
-                    playedWell
-                        ? 'Great memory! You reached round $currentRound.'
-                        : 'No rounds completed this time. Try again!',
+                    completedAllRounds
+                        ? 'Excellent memory! You completed all $maxRounds rounds!'
+                        : playedWell
+                            ? 'Great memory! You completed $roundsCompleted rounds.'
+                            : 'No rounds completed this time. Try again!',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 14, color: Colors.white70),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white70,
+                    ),
                   ),
+
+                  const SizedBox(height: 10),
+
+                  Text(
+                    'Difficulty: ${widget.difficulty.label}',
+                    style: const TextStyle(
+                      color: Colors.cyanAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+
                   const SizedBox(height: 16),
+
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1011,27 +1267,42 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
                       ),
                     ),
                   ),
+
                   const SizedBox(height: 16),
+
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _buildStatBadge('🏆 Score', '$score'),
-                      _buildStatBadge('🧠 Rounds', '$roundsCompleted'),
+                      _buildStatBadge(
+                        '🧠 Rounds',
+                        '$roundsCompleted/$maxRounds',
+                      ),
                     ],
                   ),
+
                   const SizedBox(height: 12),
+
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _buildStatBadge('🔥 Best Streak', '$bestStreak'),
-                      _buildStatBadge('❌ Mistakes', '$wrongAttempts'),
+                      _buildStatBadge(
+                        '🔥 Best Streak',
+                        '$bestStreak',
+                      ),
+                      _buildStatBadge(
+                        '❌ Mistakes',
+                        '$wrongAttempts',
+                      ),
                       _buildStatBadge(
                         '🎯 Accuracy',
                         '${accuracy.toStringAsFixed(0)}%',
                       ),
                     ],
                   ),
+
                   const SizedBox(height: 14),
+
                   if (isSaving)
                     const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1068,15 +1339,19 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+
                   const SizedBox(height: 20),
+
                   _buildChunkyButton(
                     label: 'Play Again',
                     icon: Icons.refresh_rounded,
                     color: const Color(0xFF2EC4B6),
                     onPressed: _restartGame,
                   ),
+
                   if (saveFailed) ...[
                     const SizedBox(height: 10),
+
                     _buildChunkyButton(
                       label: 'Retry Saving',
                       icon: Icons.cloud_upload_rounded,
@@ -1086,11 +1361,14 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
                           isSaving = true;
                           saveFailed = false;
                         });
+
                         _saveScore();
                       },
                     ),
                   ],
+
                   const SizedBox(height: 10),
+
                   _buildChunkyButton(
                     label: 'Main Menu',
                     icon: Icons.home_rounded,
@@ -1113,9 +1391,11 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   @override
   Widget build(BuildContext context) {
     return MediaQuery(
-      // Stops large system font settings from inflating the layout.
+      // Prevents large system font settings from inflating the layout.
       data: MediaQuery.of(context).copyWith(
-        textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.0),
+        textScaler: MediaQuery.textScalerOf(context).clamp(
+          maxScaleFactor: 1.0,
+        ),
       ),
       child: Scaffold(
         body: Container(
@@ -1135,29 +1415,40 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
               Column(
                 children: [
                   _buildCustomAppBar(),
+
                   Expanded(
-                    child: gameEnded ? _buildResultScreen() : _buildGameplay(),
+                    child: gameEnded
+                        ? _buildResultScreen()
+                        : _buildGameplay(),
                   ),
                 ],
               ),
 
-              // Pause menu + shared options screen
+              // Pause menu + shared options screen.
               if (isPaused && !gameEnded)
                 Positioned.fill(
                   child: showOptions
                       ? GameOptionsMenu(
                           audio: audio,
-                          onBack: () => setState(() => showOptions = false),
+                          onBack: () {
+                            setState(() {
+                              showOptions = false;
+                            });
+                          },
                         )
                       : PauseMenu(
                           onResume: _resumeGame,
                           onRestart: _restartGame,
-                          onOptions: () => setState(() => showOptions = true),
+                          onOptions: () {
+                            setState(() {
+                              showOptions = true;
+                            });
+                          },
                           onMainMenu: _goToMainMenu,
                         ),
                 ),
 
-              // Confetti
+              // Confetti.
               Align(
                 alignment: Alignment.topCenter,
                 child: ConfettiWidget(

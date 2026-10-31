@@ -863,13 +863,15 @@ class _GameLevelCardState extends State<GameLevelCard> {
 
     // Pass the selected difficulty to games that support it.
     final Widget selectedGame = widget.levelNum == '1'
-        ? MathGame(difficulty: selectedDifficulty)
-        : widget.levelNum == '2'
-            ? SciencePuzzle(difficulty: selectedDifficulty)
-            : widget.levelNum == '3'
-                ? MemoryMatch(difficulty: selectedDifficulty)
-                : widget.levelNum == '4'
-                    ? PatternSequence(difficulty: selectedDifficulty)
+    ? MathGame(difficulty: selectedDifficulty)
+    : widget.levelNum == '2'
+        ? SciencePuzzle(difficulty: selectedDifficulty)
+        : widget.levelNum == '3'
+            ? MemoryMatch(difficulty: selectedDifficulty)
+            : widget.levelNum == '4'
+                ? PatternSequence(difficulty: selectedDifficulty)
+                : widget.levelNum == '5'
+                    ? MemoryMatrix(difficulty: selectedDifficulty)
                     : widget.page;
 
     Navigator.push(
