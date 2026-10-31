@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_screen.dart';
 import '../widgets/player_avatar.dart';
+import '../models/game_difficulty.dart';
 
 import '../game/math_game.dart';
 import '../game/science_puzzle.dart';
@@ -28,70 +29,59 @@ class LevelSelectScreen extends StatefulWidget {
 class _LevelSelectScreenState extends State<LevelSelectScreen>
     with RouteAware {
   @override
-    void initState() {
-      super.initState();
-      _syncLocalProfileToFirebase();
-    }
+  void initState() {
+    super.initState();
+    _syncLocalProfileToFirebase();
+  }
 
-    Future<void> _syncLocalProfileToFirebase() async {
-      try {
-        final prefs = await SharedPreferences.getInstance();
+  Future<void> _syncLocalProfileToFirebase() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedName = prefs.getString('player_username')?.trim();
+      final savedAvatar = prefs.getInt('player_avatar') ?? 0;
 
-        final savedName = prefs.getString('player_username')?.trim();
-        final savedAvatar = prefs.getInt('player_avatar') ?? 0;
+      final username = savedName != null && savedName.isNotEmpty
+          ? savedName
+          : 'Guest Player';
 
-        final username =
-            savedName != null && savedName.isNotEmpty
-                ? savedName
-                : 'Guest Player';
+      final auth = FirebaseAuth.instance;
+      var user = auth.currentUser;
 
-        final auth = FirebaseAuth.instance;
-        var user = auth.currentUser;
-
-        if (user == null) {
-          final credential = await auth.signInAnonymously();
-          user = credential.user;
-        }
-
-        if (user == null) return;
-
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .set({
-          'playerId': user.uid,
-          'username': username,
-          'avatar': savedAvatar
-              .clamp(0, kAvatarCount - 1)
-              .toInt(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-
-        if (mounted) setState(() {});
-        debugPrint('Player profile synced to Firebase.');
-      } catch (error) {
-        debugPrint('Profile sync skipped: $error');
+      if (user == null) {
+        final credential = await auth.signInAnonymously();
+        user = credential.user;
       }
+
+      if (user == null) return;
+
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'playerId': user.uid,
+        'username': username,
+        'avatar': savedAvatar.clamp(0, kAvatarCount - 1).toInt(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (mounted) setState(() {});
+      debugPrint('Player profile synced to Firebase.');
+    } catch (error) {
+      debugPrint('Profile sync skipped: $error');
     }
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
     final route = ModalRoute.of(context);
-
     if (route is PageRoute) {
       menuRouteObserver.subscribe(this, route);
     }
   }
 
-  // A game (or its loading screen) was opened on top of this screen.
   @override
   void didPushNext() {
     MenuMusic.instance.pause();
   }
 
-  // The game was closed and this screen is visible again.
   @override
   void didPopNext() {
     MenuMusic.instance.restart();
@@ -103,10 +93,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
     super.dispose();
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -114,9 +100,9 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF7564B8), // lighter violet at the top
-              Color(0xFF806BC4), // brighter lavender-violet in the middle
-              Color(0xFF5B4A98), // softer violet at the bottom
+              Color(0xFF7564B8),
+              Color(0xFF806BC4),
+              Color(0xFF5B4A98),
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -125,15 +111,13 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
         child: SafeArea(
           child: Column(
             children: [
-              // HEADER ROW: back arrow, LEVEL SELECT, profile
               Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 6,
                 ),
                 child: Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     _build3DButton(
@@ -144,7 +128,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         size: 28,
                       ),
                     ),
-
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
@@ -168,24 +151,18 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         ),
                       ),
                     ),
-
                     PlayerProfileButton(),
                   ],
                 ),
               ),
-
-              // TITLE (left) + STARS (right, under profile)
               Padding(
-                // Right padding is 24 so the badge lines up with the
-                // profile avatar (16 screen padding + 8 button padding).
                 padding: const EdgeInsets.fromLTRB(20, 0, 24, 0),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(
                       child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           ShaderMask(
                             shaderCallback: (bounds) =>
@@ -204,7 +181,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  // Cleaned logo container with circular clipping
                                   Container(
                                     width: 42,
                                     height: 42,
@@ -217,8 +193,9 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                                       width: 42,
                                       height: 42,
                                       fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) =>
-                                          const Icon(
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              const Icon(
                                         Icons.image_not_supported_rounded,
                                         color: Colors.white,
                                         size: 36,
@@ -257,10 +234,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         ],
                       ),
                     ),
-
                     const SizedBox(width: 12),
-
-                    // OPTIONS (music volume)
                     _build3DButton(
                       onTap: () => showMenuOptions(context),
                       child: const Icon(
@@ -269,9 +243,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                         size: 22,
                       ),
                     ),
-
                     const SizedBox(width: 8),
-
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -311,18 +283,10 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                   ],
                 ),
               ),
-
               const SizedBox(height: 15),
-
-              // GAME LEVELS
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(
-                    16,
-                    10,
-                    16,
-                    25,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 25),
                   physics: const BouncingScrollPhysics(),
                   children: [
                     GameLevelCard(
@@ -339,7 +303,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const MathGame(),
                     ),
-
                     GameLevelCard(
                       levelNum: '2',
                       title: 'Science Puzzle',
@@ -354,7 +317,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const SciencePuzzle(),
                     ),
-
                     GameLevelCard(
                       levelNum: '3',
                       title: 'Memory Match',
@@ -369,7 +331,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const MemoryMatch(),
                     ),
-
                     GameLevelCard(
                       levelNum: '4',
                       title: 'Pattern Logic',
@@ -384,7 +345,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const PatternSequence(),
                     ),
-
                     GameLevelCard(
                       levelNum: '5',
                       title: 'Tile Matrix',
@@ -399,7 +359,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const MemoryMatrix(),
                     ),
-
                     GameLevelCard(
                       levelNum: '6',
                       title: 'Case Detective',
@@ -414,7 +373,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const LogicDetective(),
                     ),
-
                     GameLevelCard(
                       levelNum: '7',
                       title: 'Word Quest',
@@ -429,7 +387,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const WordQuestGame(),
                     ),
-
                     GameLevelCard(
                       levelNum: '8',
                       title: 'Path Finder',
@@ -484,34 +441,21 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
   }
 }
 
-// ============================================================
-// PLAYER PROFILE BUTTON
-// Displays the provider's profile photo and saved username.
-// ============================================================
-
 class PlayerProfileButton extends StatelessWidget {
   PlayerProfileButton({super.key});
 
-  String _getUsername(
-    User user,
-    Map<String, dynamic>? data,
-  ) {
+  String _getUsername(User user, Map<String, dynamic>? data) {
     final savedUsername = data?['username'];
-
-    if (savedUsername is String &&
-        savedUsername.trim().isNotEmpty) {
+    if (savedUsername is String && savedUsername.trim().isNotEmpty) {
       return savedUsername.trim();
     }
 
     final displayName = user.displayName;
-
-    if (displayName != null &&
-        displayName.trim().isNotEmpty) {
+    if (displayName != null && displayName.trim().isNotEmpty) {
       return displayName.trim();
     }
 
     final email = user.email;
-
     if (email != null && email.contains('@')) {
       return email.split('@').first;
     }
@@ -524,17 +468,15 @@ class PlayerProfileButton extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      // Offline / first launch: display the locally saved player profile.
       return FutureBuilder<SharedPreferences>(
         future: SharedPreferences.getInstance(),
         builder: (context, snapshot) {
           final prefs = snapshot.data;
           final savedName = prefs?.getString('player_username');
           final savedAvatar = prefs?.getInt('player_avatar') ?? 0;
-
           return _buildProfile(
             context,
-            username: (savedName != null && savedName.trim().isNotEmpty)
+            username: savedName != null && savedName.trim().isNotEmpty
                 ? savedName.trim()
                 : 'Guest Player',
             avatar: savedAvatar.clamp(0, kAvatarCount - 1),
@@ -554,7 +496,6 @@ class PlayerProfileButton extends StatelessWidget {
         final username = _getUsername(user, data);
         final avatarRaw = data?['avatar'];
         final avatar = avatarRaw is int ? avatarRaw : 0;
-
         return _buildProfile(
           context,
           username: username,
@@ -584,10 +525,7 @@ class PlayerProfileButton extends StatelessWidget {
           );
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 4,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -615,9 +553,7 @@ class PlayerProfileButton extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 110,
-                ),
+                constraints: const BoxConstraints(maxWidth: 110),
                 child: Text(
                   username,
                   maxLines: 1,
@@ -649,23 +585,15 @@ class PlayerProfileButton extends StatelessWidget {
       isScrollControlled: true,
       builder: (sheetContext) {
         return Container(
-          padding: const EdgeInsets.fromLTRB(
-            24,
-            12,
-            24,
-            28,
-          ),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
           decoration: const BoxDecoration(
             color: Color(0xFFFFFBFF),
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(28),
-            ),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // BOTTOM SHEET HANDLE
                 Container(
                   width: 42,
                   height: 5,
@@ -674,18 +602,13 @@ class PlayerProfileButton extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-
                 const SizedBox(height: 22),
-
-                // PROFILE PICTURE
                 CircleAvatar(
                   radius: 38,
                   backgroundColor: const Color(0xFFF1DDF4),
                   child: PlayerAvatar(index: avatar, size: 76),
                 ),
-
                 const SizedBox(height: 12),
-
                 const Text(
                   'ACCOUNT SETTINGS',
                   style: TextStyle(
@@ -695,9 +618,7 @@ class PlayerProfileButton extends StatelessWidget {
                     letterSpacing: 1,
                   ),
                 ),
-
                 const SizedBox(height: 6),
-
                 Text(
                   username,
                   textAlign: TextAlign.center,
@@ -707,9 +628,7 @@ class PlayerProfileButton extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-
                 const SizedBox(height: 5),
-
                 Text(
                   user == null
                       ? 'Playing as a guest'
@@ -720,12 +639,9 @@ class PlayerProfileButton extends StatelessWidget {
                     fontSize: 14,
                   ),
                 ),
-
                 const SizedBox(height: 22),
                 const Divider(),
                 const SizedBox(height: 8),
-
-                // USERNAME
                 ListTile(
                   leading: const Icon(
                     Icons.person_outline,
@@ -734,8 +650,6 @@ class PlayerProfileButton extends StatelessWidget {
                   title: const Text('Player username'),
                   subtitle: Text(username),
                 ),
-
-                // ACCOUNT STATUS
                 ListTile(
                   leading: const Icon(
                     Icons.emoji_events_outlined,
@@ -748,10 +662,7 @@ class PlayerProfileButton extends StatelessWidget {
                         : 'Signed in to save your progress',
                   ),
                 ),
-
                 const SizedBox(height: 16),
-
-                // EDIT PROFILE
                 SizedBox(
                   width: double.infinity,
                   height: 52,
@@ -775,13 +686,9 @@ class PlayerProfileButton extends StatelessWidget {
                     },
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
                 TextButton(
-                  onPressed: () {
-                    Navigator.pop(sheetContext);
-                  },
+                  onPressed: () => Navigator.pop(sheetContext),
                   child: const Text('CANCEL'),
                 ),
               ],
@@ -792,10 +699,6 @@ class PlayerProfileButton extends StatelessWidget {
     );
   }
 }
-
-// ============================================================
-// GAME LEVEL CARD
-// ============================================================
 
 class GameLevelCard extends StatefulWidget {
   final String levelNum;
@@ -828,6 +731,203 @@ class GameLevelCard extends StatefulWidget {
 class _GameLevelCardState extends State<GameLevelCard> {
   bool _isPressed = false;
 
+  Future<void> _openDifficultySelection() async {
+    if (!widget.unlocked) return;
+
+    final selectedDifficulty = await showModalBottomSheet<GameDifficulty>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF806BC4), Color(0xFF51418F)],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.white54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Icon(
+                  Icons.psychology_alt_rounded,
+                  color: Color(0xFFFFD700),
+                  size: 48,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'SELECT DIFFICULTY',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  widget.title,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                _buildDifficultyButton(
+                  context: sheetContext,
+                  difficulty: GameDifficulty.easy,
+                  title: 'EASY',
+                  description: 'Relax and learn at your own pace',
+                  icon: Icons.sentiment_satisfied_alt_rounded,
+                  color: const Color(0xFF43C77A),
+                ),
+                const SizedBox(height: 12),
+                _buildDifficultyButton(
+                  context: sheetContext,
+                  difficulty: GameDifficulty.medium,
+                  title: 'MEDIUM',
+                  description: 'A balanced challenge',
+                  icon: Icons.bolt_rounded,
+                  color: const Color(0xFFFFA726),
+                ),
+                const SizedBox(height: 12),
+                _buildDifficultyButton(
+                  context: sheetContext,
+                  difficulty: GameDifficulty.hard,
+                  title: 'HARD',
+                  description: 'Test your skills with a greater challenge',
+                  icon: Icons.local_fire_department_rounded,
+                  color: const Color(0xFFEF5350),
+                ),
+                const SizedBox(height: 14),
+                TextButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text(
+                    'CANCEL',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selectedDifficulty == null) return;
+
+    // Pass the selected difficulty to games that support it.
+    final Widget selectedGame = widget.levelNum == '1'
+        ? MathGame(difficulty: selectedDifficulty)
+        : widget.levelNum == '2'
+            ? SciencePuzzle(difficulty: selectedDifficulty)
+            : widget.page;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => GameLoadingScreen(
+          levelTitle: widget.title,
+          nextScreen: selectedGame,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDifficultyButton({
+    required BuildContext context,
+    required GameDifficulty difficulty,
+    required String title,
+    required String description,
+    required IconData icon,
+    required Color color,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => Navigator.pop(context, difficulty),
+          child: Ink(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.13),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: color.withOpacity(0.9),
+                width: 2,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 27),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        description,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -836,18 +936,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
       },
       onTapUp: (_) {
         setState(() => _isPressed = false);
-
-        if (!widget.unlocked) return;
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => GameLoadingScreen(
-              levelTitle: widget.title,
-              nextScreen: widget.page,
-            ),
-          ),
-        );
+        _openDifficultySelection();
       },
       onTapCancel: () {
         setState(() => _isPressed = false);
@@ -855,11 +944,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         margin: const EdgeInsets.only(bottom: 18),
-        transform: Matrix4.translationValues(
-          0,
-          _isPressed ? 4 : 0,
-          0,
-        ),
+        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: widget.gradientColors,
@@ -885,10 +970,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 14,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
               Container(
@@ -912,9 +994,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ),
                 ),
               ),
-
               const SizedBox(width: 14),
-
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -938,9 +1018,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 3),
-
                     Text(
                       widget.title,
                       style: const TextStyle(
@@ -956,7 +1034,6 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         ],
                       ),
                     ),
-
                     Text(
                       widget.subtitle,
                       style: TextStyle(
@@ -965,9 +1042,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-
                     const SizedBox(height: 6),
-
                     Row(
                       children: [
                         const Text(
