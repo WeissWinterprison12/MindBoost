@@ -762,10 +762,38 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Icon(
-                  Icons.psychology_alt_rounded,
-                  color: Color(0xFFFFD700),
-                  size: 48,
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFFFFD700),
+                      width: 2,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 6,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/images/mindboostlogo.jpg',
+                      width: 54,
+                      height: 54,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.image_not_supported_rounded,
+                          color: Colors.white,
+                          size: 30,
+                        );
+                      },
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 const Text(
@@ -838,7 +866,11 @@ class _GameLevelCardState extends State<GameLevelCard> {
         ? MathGame(difficulty: selectedDifficulty)
         : widget.levelNum == '2'
             ? SciencePuzzle(difficulty: selectedDifficulty)
-            : widget.page;
+            : widget.levelNum == '3'
+                ? MemoryMatch(difficulty: selectedDifficulty)
+                : widget.levelNum == '4'
+                    ? PatternSequence(difficulty: selectedDifficulty)
+                    : widget.page;
 
     Navigator.push(
       context,

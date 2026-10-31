@@ -6,12 +6,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
+import 'tile_matrix.dart';
 
 class PatternSequence extends StatefulWidget {
-  const PatternSequence({super.key});
+  final GameDifficulty difficulty;
+
+  const PatternSequence({
+    super.key,
+    this.difficulty = GameDifficulty.hard,
+  });
 
   @override
   State<PatternSequence> createState() => _PatternSequenceState();
@@ -19,8 +26,34 @@ class PatternSequence extends StatefulWidget {
 
 class _PatternSequenceState extends State<PatternSequence>
     with TickerProviderStateMixin {
-  static const int patternQuestionCount = 5;
-  static const int patternQuestionDuration = 10;
+  // ============================================================
+  // DIFFICULTY SETTINGS
+  // ============================================================
+
+  int get patternQuestionCount {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 5;
+      case GameDifficulty.medium:
+        return 7;
+      case GameDifficulty.hard:
+        return 10;
+    }
+  }
+
+  int get patternQuestionDuration {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 0;
+      case GameDifficulty.medium:
+        return 15;
+      case GameDifficulty.hard:
+        return 10;
+    }
+  }
+
+  bool get hasTimer => widget.difficulty != GameDifficulty.easy;
+
   static const int patternXp = 10;
   static const int streakBonusXp = 5;
   static const double passAccuracy = 60;
@@ -52,7 +85,7 @@ class _PatternSequenceState extends State<PatternSequence>
   int patternCorrect = 0;
   int patternWrong = 0;
   String? selectedAnswer;
-  int timeLeft = patternQuestionDuration;
+  int timeLeft = 0;
   int xp = 0;
   int streak = 0;
   int bestStreak = 0;
@@ -91,7 +124,7 @@ class _PatternSequenceState extends State<PatternSequence>
     );
     _resetState();
     _initAudio();
-    startPatternTimer();
+    if (hasTimer) startPatternTimer();
   }
 
   // ============================================================
@@ -117,7 +150,7 @@ class _PatternSequenceState extends State<PatternSequence>
     patternCorrect = 0;
     patternWrong = 0;
     selectedAnswer = null;
-    timeLeft = patternQuestionDuration;
+    timeLeft = hasTimer ? patternQuestionDuration : 0;
     xp = 0;
     streak = 0;
     bestStreak = 0;
@@ -134,10 +167,22 @@ class _PatternSequenceState extends State<PatternSequence>
     setState(_resetState);
     audio.stopEffects();
     audio.startMusic();
-    startPatternTimer();
+    if (hasTimer) startPatternTimer();
   }
 
   void goToMainMenu() => Navigator.pop(context);
+
+  // NEXT LEVEL → Tile Matrix (Level 5)
+  void goToNextLevel() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        // TODO: once MemoryMatrix accepts a difficulty parameter, change to:
+        // MemoryMatrix(difficulty: widget.difficulty)
+        builder: (context) => const MemoryMatrix(),
+      ),
+    );
+  }
 
   void _awardCorrect() {
     streak++;
@@ -173,6 +218,12 @@ class _PatternSequenceState extends State<PatternSequence>
   }
 
   void startPatternTimer({bool reset = true}) {
+    if (!hasTimer) {
+      timer?.cancel();
+      timeLeft = 0;
+      return;
+    }
+
     if (reset) timeLeft = patternQuestionDuration;
     _startCountdown(handlePatternTimeout);
   }
@@ -234,7 +285,7 @@ class _PatternSequenceState extends State<PatternSequence>
       answered = false;
       selectedAnswer = null;
       feedbackText = '';
-      timeLeft = patternQuestionDuration;
+      timeLeft = hasTimer ? patternQuestionDuration : 0;
     });
     startPatternTimer();
   }
@@ -281,6 +332,7 @@ class _PatternSequenceState extends State<PatternSequence>
     try {
       await FirebaseFirestore.instance.collection('scores').add({
         'level': 'Pattern Logic',
+        'difficulty': widget.difficulty.label,
         'patternCorrect': patternCorrect,
         'patternTotal': questions.length,
         'correct': patternCorrect,
@@ -497,15 +549,17 @@ class _PatternSequenceState extends State<PatternSequence>
         children: [
           Row(
             children: [
-              Expanded(
-                child: _buildHudCard(
-                  icon: Icons.timer_outlined,
-                  title: 'TIME',
-                  value: '${displayTime}s',
-                  valueColor: timeColor,
+              if (hasTimer) ...[
+                Expanded(
+                  child: _buildHudCard(
+                    icon: Icons.timer_outlined,
+                    title: 'TIME',
+                    value: '${displayTime}s',
+                    valueColor: timeColor,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                 child: _buildHudCard(
                   icon: Icons.star_rounded,
@@ -554,18 +608,20 @@ class _PatternSequenceState extends State<PatternSequence>
                           letterSpacing: 1.2,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(
-                          value: (displayTime / patternQuestionDuration)
-                              .clamp(0.0, 1.0),
-                          minHeight: 8,
-                          backgroundColor: Colors.white12,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(timeColor),
+                      if (hasTimer) ...[
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: LinearProgressIndicator(
+                            value: (displayTime / patternQuestionDuration)
+                                .clamp(0.0, 1.0),
+                            minHeight: 8,
+                            backgroundColor: Colors.white12,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(timeColor),
+                          ),
                         ),
-                      ),
+                      ],
                       const SizedBox(height: 14),
                       _glassCard(
                         padding: const EdgeInsets.symmetric(
@@ -777,6 +833,15 @@ class _PatternSequenceState extends State<PatternSequence>
                 color: const Color(0xFF2EC4B6),
                 onPressed: restartGame,
               ),
+              if (passed) ...[
+                const SizedBox(height: 10),
+                _buildChunkyButton(
+                  label: 'Next Level',
+                  icon: Icons.arrow_forward_rounded,
+                  color: const Color(0xFFFFD700),
+                  onPressed: goToNextLevel,
+                ),
+              ],
               const SizedBox(height: 10),
               _buildChunkyButton(
                 label: 'Main Menu',

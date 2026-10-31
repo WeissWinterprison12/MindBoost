@@ -11,6 +11,7 @@ import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
 import '../services/score_identity.dart';
 import '../widgets/pause_menu.dart';
+import 'science_puzzle.dart';
 
 class MathGame extends StatefulWidget {
   final GameDifficulty difficulty;
@@ -619,6 +620,18 @@ class _MathGameState extends State<MathGame> {
 
   void goToMainMenu() => Navigator.pop(context);
 
+  // NEXT LEVEL → Science Puzzle (same difficulty)
+  void goToNextLevel() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SciencePuzzle(
+          difficulty: widget.difficulty,
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _gameSession++;
@@ -937,6 +950,15 @@ class _MathGameState extends State<MathGame> {
                   Text('🎯 Accuracy: ${accuracy.toStringAsFixed(0)}%', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 20),
                   _buildChunkyButton(label: 'Try Again', icon: Icons.refresh_rounded, color: const Color(0xFF2EC4B6), onPressed: restartGame),
+                  if (passed) ...[
+                    const SizedBox(height: 10),
+                    _buildChunkyButton(
+                      label: 'Next Level',
+                      icon: Icons.arrow_forward_rounded,
+                      color: const Color(0xFFFFD700),
+                      onPressed: goToNextLevel,
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   _buildChunkyButton(label: 'Main Menu', icon: Icons.home_rounded, color: Colors.white24, onPressed: goToMainMenu),
                 ],

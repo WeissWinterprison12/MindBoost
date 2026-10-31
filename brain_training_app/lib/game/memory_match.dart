@@ -6,12 +6,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
+import 'pattern_sequence.dart';
 
 class MemoryMatch extends StatefulWidget {
-  const MemoryMatch({super.key});
+  final GameDifficulty difficulty;
+
+  const MemoryMatch({
+    super.key,
+    this.difficulty = GameDifficulty.hard,
+  });
 
   @override
   State<MemoryMatch> createState() => _MemoryMatchState();
@@ -23,14 +30,31 @@ class _MemoryMatchState extends State<MemoryMatch>
   // GAME SETTINGS
   // ============================================================
 
-  static const int totalPairs = 6;
-  static const int totalCards = totalPairs * 2;
+  int get totalPairs =>
+      widget.difficulty == GameDifficulty.hard ? 8 : 6;
 
-  static const int columns = 3;
-  static const int rows = totalCards ~/ columns; // 4
+  int get totalCards => totalPairs * 2;
 
-  static const int previewDuration = 3;
-  static const int gameDuration = 60;
+  int get columns =>
+      widget.difficulty == GameDifficulty.hard ? 4 : 3;
+
+  int get rows => totalCards ~/ columns;
+
+  int get previewDuration =>
+      widget.difficulty == GameDifficulty.easy ? 5 : 3;
+
+  int get gameDuration {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return 0;
+      case GameDifficulty.medium:
+        return 60;
+      case GameDifficulty.hard:
+        return 45;
+    }
+  }
+
+  bool get hasGameTimer => widget.difficulty != GameDifficulty.easy;
 
   static const double cardSpacing = 8;
   static const double cardAspectRatio = 0.9; // width / height
@@ -46,6 +70,8 @@ class _MemoryMatchState extends State<MemoryMatch>
     '🔬',
     '🔢',
     '⭐',
+    '🦋',
+    '🌈',
   ];
 
   late List<String> cards;
@@ -62,8 +88,8 @@ class _MemoryMatchState extends State<MemoryMatch>
   int moves = 0;
   int matchedPairs = 0;
 
-  int previewSeconds = previewDuration;
-  int gameSeconds = gameDuration;
+  int previewSeconds = 3;
+  int gameSeconds = 0;
 
   bool previewing = true;
   bool checkingPair = false;
@@ -148,7 +174,7 @@ class _MemoryMatchState extends State<MemoryMatch>
 
     final List<String> newCards = [];
 
-    for (final symbol in cardSymbols) {
+    for (final symbol in cardSymbols.take(totalPairs)) {
       newCards.add(symbol);
       newCards.add(symbol);
     }
@@ -230,8 +256,8 @@ class _MemoryMatchState extends State<MemoryMatch>
     } else if (checkingPair) {
       // Resume the pending pair check without replaying its sound effect.
       checkPair(playFeedback: false);
-      startGameTimer();
-    } else {
+      if (hasGameTimer) startGameTimer();
+    } else if (hasGameTimer) {
       startGameTimer();
     }
   }
@@ -267,7 +293,9 @@ class _MemoryMatchState extends State<MemoryMatch>
             previewing = false;
           });
 
-          startGameTimer();
+          if (hasGameTimer) {
+            startGameTimer();
+          }
         }
       },
     );
@@ -278,6 +306,8 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   void startGameTimer() {
+    if (!hasGameTimer || previewing || gameEnded || completed) return;
+
     timer?.cancel();
 
     timer = Timer.periodic(
@@ -412,12 +442,16 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   void calculateResults() {
-    final int timeUsed = gameDuration - gameSeconds;
+    final int timeUsed =
+        hasGameTimer ? gameDuration - gameSeconds : 0;
 
     int calculatedScore = 1000;
 
     calculatedScore -= moves * 20;
-    calculatedScore -= timeUsed * 5;
+
+    if (hasGameTimer) {
+      calculatedScore -= timeUsed * 5;
+    }
 
     if (calculatedScore < 0) {
       calculatedScore = 0;
@@ -433,8 +467,8 @@ class _MemoryMatchState extends State<MemoryMatch>
       xp += 10;
     }
 
-    // Fast completion bonus.
-    if (timeUsed <= 30) {
+    // Fast completion bonus applies only when a countdown is active.
+    if (hasGameTimer && timeUsed <= 30) {
       xp += 10;
     }
   }
@@ -494,6 +528,7 @@ class _MemoryMatchState extends State<MemoryMatch>
     try {
       await FirebaseFirestore.instance.collection('scores').add({
         'level': 'Memory Match',
+        'difficulty': widget.difficulty.label,
         'moves': moves,
         'matchedPairs': matchedPairs,
         'score': score,
@@ -515,11 +550,14 @@ class _MemoryMatchState extends State<MemoryMatch>
     Navigator.pop(context);
   }
 
+  // NEXT LEVEL → Pattern Logic (same difficulty)
   void goToNextLevel() {
-    // Level 4 will be connected here later.
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Level 4 will be connected here next!'),
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PatternSequence(
+          difficulty: widget.difficulty,
+        ),
       ),
     );
   }
@@ -808,7 +846,7 @@ class _MemoryMatchState extends State<MemoryMatch>
       builder: (context, area) {
         final double maxWidth = min(area.maxWidth, 420.0);
 
-        // Try to fit by width first.
+        // Calculate card dimensions using the active difficulty layout.
         double cardWidth =
             (maxWidth - cardSpacing * (columns - 1)) / columns;
         double cardHeight = cardWidth / cardAspectRatio;
@@ -816,7 +854,7 @@ class _MemoryMatchState extends State<MemoryMatch>
         double gridHeight =
             cardHeight * rows + cardSpacing * (rows - 1);
 
-        // Too tall? Shrink to fit the height instead.
+        // If the grid is too tall, shrink the cards to fit the available area.
         if (gridHeight > area.maxHeight) {
           cardHeight =
               (area.maxHeight - cardSpacing * (rows - 1)) / rows;
@@ -827,16 +865,14 @@ class _MemoryMatchState extends State<MemoryMatch>
         final double gridWidth =
             cardWidth * columns + cardSpacing * (columns - 1);
 
-        return Align(
-          alignment: Alignment.topCenter,
+        return Center(
           child: SizedBox(
             width: gridWidth,
             height: gridHeight,
             child: GridView.builder(
               padding: EdgeInsets.zero,
               physics: const NeverScrollableScrollPhysics(),
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: columns,
                 crossAxisSpacing: cardSpacing,
                 mainAxisSpacing: cardSpacing,
@@ -856,25 +892,29 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   Widget _buildGameplay() {
+    final bool showTimerHud = previewing || hasGameTimer;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
         children: [
-          // HUD
+          // HUD: Easy mode hides the timer completely after the preview.
           Row(
             children: [
-              Expanded(
-                child: _buildHudCard(
-                  icon: Icons.timer_outlined,
-                  title: previewing ? 'PREVIEW' : 'TIME',
-                  value: previewing
-                      ? '${previewSeconds}s'
-                      : '${gameSeconds}s',
-                  valueColor:
-                      previewing ? Colors.amber : Colors.cyanAccent,
+              if (showTimerHud) ...[
+                Expanded(
+                  child: _buildHudCard(
+                    icon: Icons.timer_outlined,
+                    title: previewing ? 'PREVIEW' : 'TIME',
+                    value: previewing
+                        ? '${previewSeconds}s'
+                        : '${gameSeconds}s',
+                    valueColor:
+                        previewing ? Colors.amber : Colors.cyanAccent,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                 child: _buildHudCard(
                   icon: Icons.psychology_alt_rounded,
@@ -920,7 +960,7 @@ class _MemoryMatchState extends State<MemoryMatch>
 
           const SizedBox(height: 10),
 
-          // Cards take the remaining space
+          // Cards take the remaining space and remain centered.
           Expanded(
             child: _buildCardGrid(),
           ),
@@ -952,7 +992,8 @@ class _MemoryMatchState extends State<MemoryMatch>
   Widget buildResultScreen() {
     final bool passed = xp > 0;
 
-    final int timeUsed = gameDuration - gameSeconds;
+    final int timeUsed =
+        hasGameTimer ? gameDuration - gameSeconds : 0;
 
     return Center(
       child: SingleChildScrollView(
@@ -1047,28 +1088,19 @@ class _MemoryMatchState extends State<MemoryMatch>
                     ),
                   ),
 
-                  const SizedBox(height: 4),
-
-                  Text(
-                    '⏱ Time Used: ${timeUsed}s',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+                  if (hasGameTimer) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '⏱ Time Used: ${timeUsed}s',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
+                  ],
 
                   const SizedBox(height: 20),
-
-                  if (passed) ...[
-                    _buildChunkyButton(
-                      label: 'Next Level',
-                      icon: Icons.arrow_forward_rounded,
-                      color: const Color(0xFFFF9F1C),
-                      onPressed: goToNextLevel,
-                    ),
-                    const SizedBox(height: 10),
-                  ],
 
                   _buildChunkyButton(
                     label: 'Try Again',
@@ -1076,6 +1108,16 @@ class _MemoryMatchState extends State<MemoryMatch>
                     color: const Color(0xFF2EC4B6),
                     onPressed: restartGame,
                   ),
+
+                  if (passed) ...[
+                    const SizedBox(height: 10),
+                    _buildChunkyButton(
+                      label: 'Next Level',
+                      icon: Icons.arrow_forward_rounded,
+                      color: const Color(0xFFFFD700),
+                      onPressed: goToNextLevel,
+                    ),
+                  ],
 
                   const SizedBox(height: 10),
 
