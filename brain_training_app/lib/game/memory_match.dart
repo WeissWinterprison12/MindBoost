@@ -11,6 +11,7 @@ import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
+import 'science_puzzle.dart';
 import 'pattern_sequence.dart';
 
 class MemoryMatch extends StatefulWidget {
@@ -146,10 +147,12 @@ class _MemoryMatchState extends State<MemoryMatch>
       vsync: this,
     );
 
-    _shakeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 10.0,
-    ).chain(CurveTween(curve: Curves.elasticIn)).animate(_shakeController);
+    // Linear 0 → 1 progress; the actual left/right shake offset is computed
+    // in build() so it always settles back to exactly 0.
+    _shakeAnimation = CurvedAnimation(
+      parent: _shakeController,
+      curve: Curves.linear,
+    );
 
     _initAudio();
     startNewGame();
@@ -172,6 +175,10 @@ class _MemoryMatchState extends State<MemoryMatch>
   void startNewGame() {
     timer?.cancel();
     pairCheckTimer?.cancel();
+
+    // Make sure the screen is back at its normal position.
+    _shakeController.reset();
+    confettiController.stop();
 
     final List<String> newCards = [];
 
@@ -525,7 +532,6 @@ class _MemoryMatchState extends State<MemoryMatch>
   // SAVE SCORE TO FIREBASE
   // ============================================================
 
-  
   Future<void> saveScore(bool win) async {
     try {
       // Get the current player's identity.
@@ -558,7 +564,6 @@ class _MemoryMatchState extends State<MemoryMatch>
     }
   }
 
-
   // ============================================================
   // NAVIGATION
   // ============================================================
@@ -567,7 +572,19 @@ class _MemoryMatchState extends State<MemoryMatch>
     Navigator.pop(context);
   }
 
-  // NEXT LEVEL → Pattern Logic (same difficulty)
+  // PREVIOUS LEVEL → Level 2: Science Puzzle (same difficulty)
+  void goToPreviousLevel() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SciencePuzzle(
+          difficulty: widget.difficulty,
+        ),
+      ),
+    );
+  }
+
+  // NEXT LEVEL → Level 4: Pattern Sequence (same difficulty)
   void goToNextLevel() {
     Navigator.pushReplacement(
       context,
@@ -588,11 +605,28 @@ class _MemoryMatchState extends State<MemoryMatch>
     required IconData icon,
     required Color color,
     required VoidCallback onPressed,
+    bool iconAfterText = false,
   }) {
+    final iconWidget = Icon(icon, color: Colors.white, size: 20);
+    final textWidget = Flexible(
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+
     return GestureDetector(
       onTap: onPressed,
       child: Container(
         height: 50,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(16),
@@ -606,19 +640,9 @@ class _MemoryMatchState extends State<MemoryMatch>
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
+          children: iconAfterText
+              ? [textWidget, const SizedBox(width: 8), iconWidget]
+              : [iconWidget, const SizedBox(width: 8), textWidget],
         ),
       ),
     );
@@ -909,29 +933,26 @@ class _MemoryMatchState extends State<MemoryMatch>
   // ============================================================
 
   Widget _buildGameplay() {
-    final bool showTimerHud = previewing || hasGameTimer;
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
         children: [
-          // HUD: Easy mode hides the timer completely after the preview.
+          // HUD: always 4 cards so the layout never shifts.
+          // (Easy mode has no countdown after the preview, so it shows ∞.)
           Row(
             children: [
-              if (showTimerHud) ...[
-                Expanded(
-                  child: _buildHudCard(
-                    icon: Icons.timer_outlined,
-                    title: previewing ? 'PREVIEW' : 'TIME',
-                    value: previewing
-                        ? '${previewSeconds}s'
-                        : '${gameSeconds}s',
-                    valueColor:
-                        previewing ? Colors.amber : Colors.cyanAccent,
-                  ),
+              Expanded(
+                child: _buildHudCard(
+                  icon: Icons.timer_outlined,
+                  title: previewing ? 'PREVIEW' : 'TIME',
+                  value: previewing
+                      ? '${previewSeconds}s'
+                      : (hasGameTimer ? '${gameSeconds}s' : '∞'),
+                  valueColor:
+                      previewing ? Colors.amber : Colors.cyanAccent,
                 ),
-                const SizedBox(width: 6),
-              ],
+              ),
+              const SizedBox(width: 6),
               Expanded(
                 child: _buildHudCard(
                   icon: Icons.psychology_alt_rounded,
@@ -1119,6 +1140,7 @@ class _MemoryMatchState extends State<MemoryMatch>
 
                   const SizedBox(height: 20),
 
+                  // Try Again
                   _buildChunkyButton(
                     label: 'Try Again',
                     icon: Icons.refresh_rounded,
@@ -1126,18 +1148,35 @@ class _MemoryMatchState extends State<MemoryMatch>
                     onPressed: restartGame,
                   ),
 
-                  if (passed) ...[
-                    const SizedBox(height: 10),
-                    _buildChunkyButton(
-                      label: 'Next Level',
-                      icon: Icons.arrow_forward_rounded,
-                      color: const Color(0xFFFFD700),
-                      onPressed: goToNextLevel,
-                    ),
-                  ],
+                  const SizedBox(height: 10),
+
+                  // Previous + Next side by side (same difficulty)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildChunkyButton(
+                          label: 'Previous',
+                          icon: Icons.arrow_back_rounded,
+                          color: const Color(0xFF9B8AD6),
+                          onPressed: goToPreviousLevel,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _buildChunkyButton(
+                          label: 'Next',
+                          icon: Icons.arrow_forward_rounded,
+                          color: const Color(0xFFFFD700),
+                          onPressed: goToNextLevel,
+                          iconAfterText: true,
+                        ),
+                      ),
+                    ],
+                  ),
 
                   const SizedBox(height: 10),
 
+                  // Main Menu
                   _buildChunkyButton(
                     label: 'Main Menu',
                     icon: Icons.home_rounded,
@@ -1181,8 +1220,11 @@ class _MemoryMatchState extends State<MemoryMatch>
                   child: AnimatedBuilder(
                     animation: _shakeAnimation,
                     builder: (context, child) {
+                      final t = _shakeAnimation.value;
+                      // Shakes left/right and fades out to exactly 0 at t = 1.
+                      final dx = sin(t * pi * 6) * 10 * (1 - t);
                       return Transform.translate(
-                        offset: Offset(_shakeAnimation.value, 0),
+                        offset: Offset(dx, 0),
                         child: child,
                       );
                     },

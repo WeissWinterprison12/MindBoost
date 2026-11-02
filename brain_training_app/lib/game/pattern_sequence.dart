@@ -11,6 +11,7 @@ import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
+import 'memory_match.dart';
 import 'tile_matrix.dart';
 
 class PatternSequence extends StatefulWidget {
@@ -145,6 +146,11 @@ class _PatternSequenceState extends State<PatternSequence>
   void _resetState() {
     timer?.cancel();
     _session++;
+
+    // Make sure the screen is back at its normal position.
+    _shakeController.reset();
+    confettiController.stop();
+
     questions = List<Map<String, dynamic>>.of(_patternPool)..shuffle(Random());
     questions = questions.take(patternQuestionCount).toList();
     patternIndex = 0;
@@ -171,16 +177,32 @@ class _PatternSequenceState extends State<PatternSequence>
     if (hasTimer) startPatternTimer();
   }
 
+  // ============================================================
+  // NAVIGATION
+  // ============================================================
+
   void goToMainMenu() => Navigator.pop(context);
 
-  // NEXT LEVEL → Tile Matrix (Level 5)
+  // PREVIOUS LEVEL → Level 3: Memory Match (same difficulty)
+  void goToPreviousLevel() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MemoryMatch(
+          difficulty: widget.difficulty,
+        ),
+      ),
+    );
+  }
+
+  // NEXT LEVEL → Level 5: Tile Matrix (same difficulty)
   void goToNextLevel() {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        // TODO: once MemoryMatrix accepts a difficulty parameter, change to:
-        // MemoryMatrix(difficulty: widget.difficulty)
-        builder: (context) => const MemoryMatrix(),
+        builder: (context) => MemoryMatrix(
+          difficulty: widget.difficulty,
+        ),
       ),
     );
   }
@@ -329,7 +351,6 @@ class _PatternSequenceState extends State<PatternSequence>
     saveScore();
   }
 
-  
   Future<void> saveScore() async {
     try {
       // Get the current player's identity.
@@ -365,7 +386,6 @@ class _PatternSequenceState extends State<PatternSequence>
     }
   }
 
-
   // ============================================================
   // UI HELPERS
   // ============================================================
@@ -398,11 +418,28 @@ class _PatternSequenceState extends State<PatternSequence>
     required IconData icon,
     required Color color,
     required VoidCallback onPressed,
+    bool iconAfterText = false,
   }) {
+    final iconWidget = Icon(icon, color: Colors.white, size: 20);
+    final textWidget = Flexible(
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+
     return GestureDetector(
       onTap: onPressed,
       child: Container(
         height: 50,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(16),
@@ -416,19 +453,9 @@ class _PatternSequenceState extends State<PatternSequence>
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
+          children: iconAfterText
+              ? [textWidget, const SizedBox(width: 8), iconWidget]
+              : [iconWidget, const SizedBox(width: 8), textWidget],
         ),
       ),
     );
@@ -844,22 +871,42 @@ class _PatternSequenceState extends State<PatternSequence>
                 '$patternCorrect/${questions.length}',
               ),
               const SizedBox(height: 20),
+
+              // Try Again
               _buildChunkyButton(
                 label: 'Try Again',
                 icon: Icons.refresh_rounded,
                 color: const Color(0xFF2EC4B6),
                 onPressed: restartGame,
               ),
-              if (passed) ...[
-                const SizedBox(height: 10),
-                _buildChunkyButton(
-                  label: 'Next Level',
-                  icon: Icons.arrow_forward_rounded,
-                  color: const Color(0xFFFFD700),
-                  onPressed: goToNextLevel,
-                ),
-              ],
               const SizedBox(height: 10),
+
+              // Previous + Next side by side (same difficulty)
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildChunkyButton(
+                      label: 'Previous',
+                      icon: Icons.arrow_back_rounded,
+                      color: const Color(0xFF9B8AD6),
+                      onPressed: goToPreviousLevel,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildChunkyButton(
+                      label: 'Next',
+                      icon: Icons.arrow_forward_rounded,
+                      color: const Color(0xFFFFD700),
+                      onPressed: goToNextLevel,
+                      iconAfterText: true,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              // Main Menu
               _buildChunkyButton(
                 label: 'Main Menu',
                 icon: Icons.home_rounded,

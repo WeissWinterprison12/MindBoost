@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
@@ -12,6 +11,10 @@ import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
+import 'pattern_sequence.dart';
+
+// TODO (Level 6): when Level 6 exists, import it here, e.g.
+// import 'level_6_file.dart';
 
 class MemoryMatrix extends StatefulWidget {
   final GameDifficulty difficulty;
@@ -29,6 +32,10 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // ============================================================
   // SETTINGS
   // ============================================================
+
+  /// Set this to true once Level 6 exists and `goToNextLevel()` below
+  /// points at it. While false, only the Previous button is shown.
+  static const bool hasNextLevel = false;
 
   int get gameDuration {
     switch (widget.difficulty) {
@@ -198,6 +205,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   // ============================================================
 
   void _resetGame() {
+    // Clear any leftover confetti from a previous game.
+    confettiController.stop();
+
     currentRound = 1;
 
     gameSeconds = gameDuration;
@@ -695,6 +705,43 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     Navigator.pop(context);
   }
 
+  // PREVIOUS LEVEL → Level 4: Pattern Sequence (same difficulty)
+  void _goToPreviousLevel() {
+    gameTimer?.cancel();
+    previewTimer?.cancel();
+    feedbackTimer?.cancel();
+
+    audio.stopMusic();
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PatternSequence(
+          difficulty: widget.difficulty,
+        ),
+      ),
+    );
+  }
+
+  // NEXT LEVEL → Level 6 (same difficulty)
+  // TODO: once Level 6 exists, replace the body below with:
+  //
+  //   gameTimer?.cancel();
+  //   previewTimer?.cancel();
+  //   feedbackTimer?.cancel();
+  //   audio.stopMusic();
+  //   Navigator.pushReplacement(
+  //     context,
+  //     MaterialPageRoute(
+  //       builder: (context) => Level6Screen(difficulty: widget.difficulty),
+  //     ),
+  //   );
+  //
+  // ...then set `hasNextLevel = true` at the top of this class.
+  void _goToNextLevel() {
+    // Not available yet.
+  }
+
   // ============================================================
   // CHUNKY BUTTON
   // ============================================================
@@ -704,11 +751,28 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     required IconData icon,
     required Color color,
     required VoidCallback onPressed,
+    bool iconAfterText = false,
   }) {
+    final iconWidget = Icon(icon, color: Colors.white, size: 20);
+    final textWidget = Flexible(
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+
     return GestureDetector(
       onTap: onPressed,
       child: Container(
         height: 50,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(16),
@@ -722,19 +786,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
+          children: iconAfterText
+              ? [textWidget, const SizedBox(width: 8), iconWidget]
+              : [iconWidget, const SizedBox(width: 8), textWidget],
         ),
       ),
     );
@@ -1167,6 +1221,35 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     );
   }
 
+  /// Previous (and Next, once Level 6 exists) buttons.
+  Widget _buildLevelNavButtons() {
+    final previousButton = _buildChunkyButton(
+      label: 'Previous',
+      icon: Icons.arrow_back_rounded,
+      color: const Color(0xFF9B8AD6),
+      onPressed: _goToPreviousLevel,
+    );
+
+    // Until Level 6 exists, Previous takes the full width.
+    if (!hasNextLevel) return previousButton;
+
+    return Row(
+      children: [
+        Expanded(child: previousButton),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _buildChunkyButton(
+            label: 'Next',
+            icon: Icons.arrow_forward_rounded,
+            color: const Color(0xFFFFD700),
+            onPressed: _goToNextLevel,
+            iconAfterText: true,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildResultScreen() {
     final bool playedWell = roundsCompleted > 0;
     final bool completedAllRounds = roundsCompleted >= maxRounds;
@@ -1342,6 +1425,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
                   const SizedBox(height: 20),
 
+                  // Play Again
                   _buildChunkyButton(
                     label: 'Play Again',
                     icon: Icons.refresh_rounded,
@@ -1369,6 +1453,12 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
                   const SizedBox(height: 10),
 
+                  // Previous (+ Next when Level 6 exists), same difficulty
+                  _buildLevelNavButtons(),
+
+                  const SizedBox(height: 10),
+
+                  // Main Menu
                   _buildChunkyButton(
                     label: 'Main Menu',
                     icon: Icons.home_rounded,
