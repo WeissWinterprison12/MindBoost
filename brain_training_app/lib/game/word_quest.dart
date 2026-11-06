@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
 import '../widgets/pause_menu.dart';
 
@@ -23,7 +24,12 @@ class WordPuzzle {
 }
 
 class WordQuestGame extends StatefulWidget {
-  const WordQuestGame({super.key});
+  final GameDifficulty difficulty;
+
+  const WordQuestGame({
+    super.key,
+    this.difficulty = GameDifficulty.medium,
+  });
 
   @override
   State<WordQuestGame> createState() => _WordQuestGameState();
@@ -144,14 +150,33 @@ class _WordQuestGameState extends State<WordQuestGame>
   // GAME STATE
   // ============================================================
 
-  static const int totalGameDuration = 30; // starting time (seconds)
-  static const int maxHints = 3; // hints allowed per round
-  static const int correctBonusSeconds = 5; // time added for a correct answer
-  static const int wrongPenaltySeconds = 5; // time removed for a mistake
+  int? get timeLimitPerPuzzle => switch (widget.difficulty) {
+        GameDifficulty.easy => null,
+        GameDifficulty.medium => 30,
+        GameDifficulty.hard => 10,
+      };
+
+  int get maxHints => switch (widget.difficulty) {
+        GameDifficulty.easy => 5,
+        GameDifficulty.medium => 3,
+        GameDifficulty.hard => 1,
+      };
+
+  int get roundsToPlay => switch (widget.difficulty) {
+        GameDifficulty.easy => 5,
+        GameDifficulty.medium => 7,
+        GameDifficulty.hard => 10,
+      };
+
+  int get _baseXp => switch (widget.difficulty) {
+        GameDifficulty.easy => 5,
+        GameDifficulty.medium => 10,
+        GameDifficulty.hard => 15,
+      };
 
   Timer? _timer;
 
-  int _timeLeft = totalGameDuration;
+  late int _timeLeft;
   int _xp = 0;
   int _wordsSolved = 0;
   int _attempts = 0;
@@ -160,7 +185,7 @@ class _WordQuestGameState extends State<WordQuestGame>
   int _currentPuzzleIndex = 0;
   int _puzzleStartTime = 0;
   int _correctAnswers = 0;
-  int _hintsLeft = maxHints;
+  late int _hintsLeft;
 
   bool _isPaused = false;
   bool _isFinished = false;
@@ -216,6 +241,8 @@ class _WordQuestGameState extends State<WordQuestGame>
       vsync: this,
     );
 
+    _timeLeft = timeLimitPerPuzzle ?? 0;
+    _hintsLeft = maxHints;
     _resetPuzzlePool();
     _loadNextPuzzle();
     _initAudio();
@@ -383,6 +410,7 @@ class _WordQuestGameState extends State<WordQuestGame>
     _letterBank.shuffle(_random);
     _letterAvailable = List<bool>.filled(_letterBank.length, true);
 
+    _timeLeft = timeLimitPerPuzzle ?? 0;
     _puzzleStartTime = _timeLeft;
     _feedback = '';
     _lastAnswerCorrect = false;
@@ -399,6 +427,7 @@ class _WordQuestGameState extends State<WordQuestGame>
 
   void _startTimer() {
     _timer?.cancel();
+    if (timeLimitPerPuzzle == null) return;
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
@@ -483,11 +512,11 @@ class _WordQuestGameState extends State<WordQuestGame>
 
     if (answer == _currentPuzzle.answer) {
       final secondsUsed = _puzzleStartTime - _timeLeft;
-      final speedBonus = secondsUsed <= 5 ? 5 : 0;
+      final speedBonus = timeLimitPerPuzzle != null && secondsUsed <= 5 ? 5 : 0;
 
       final nextStreak = _streak + 1;
       final streakBonus = nextStreak % 3 == 0 ? 5 : 0;
-      final earnedXp = 10 + speedBonus + streakBonus;
+      final earnedXp = _baseXp + speedBonus + streakBonus;
 
       setState(() {
         _answerCorrect = true;
@@ -497,8 +526,7 @@ class _WordQuestGameState extends State<WordQuestGame>
         _streak = nextStreak;
         _bestStreak = max(_bestStreak, _streak);
         _xp += earnedXp;
-        _timeLeft += correctBonusSeconds;
-        _feedback = '+$earnedXp XP  •  +${correctBonusSeconds}s';
+        _feedback = '+$earnedXp XP';
         _lastAnswerCorrect = true;
       });
 
@@ -508,6 +536,11 @@ class _WordQuestGameState extends State<WordQuestGame>
 
       if (!mounted || _isFinished) return;
 
+      if (_wordsSolved >= roundsToPlay) {
+        await _finishGame();
+        return;
+      }
+
       setState(() {
         _loadNextPuzzle();
       });
@@ -516,8 +549,7 @@ class _WordQuestGameState extends State<WordQuestGame>
         _answerWrong = true;
         _answerCorrect = false;
         _streak = 0;
-        _timeLeft = max(0, _timeLeft - wrongPenaltySeconds);
-        _feedback = 'Not quite!  •  -${wrongPenaltySeconds}s';
+        _feedback = 'Not quite!';
         _lastAnswerCorrect = false;
       });
 
@@ -529,7 +561,7 @@ class _WordQuestGameState extends State<WordQuestGame>
       if (!mounted || _isFinished) return;
 
       // The penalty used up the remaining time.
-      if (_timeLeft <= 0) {
+      if (timeLimitPerPuzzle != null && _timeLeft <= 0) {
         _endRoundNow();
         return;
       }
@@ -668,7 +700,7 @@ class _WordQuestGameState extends State<WordQuestGame>
     _timer?.cancel();
 
     setState(() {
-      _timeLeft = totalGameDuration;
+      _timeLeft = timeLimitPerPuzzle ?? 0;
       _xp = 0;
       _wordsSolved = 0;
       _attempts = 0;
@@ -731,8 +763,11 @@ class _WordQuestGameState extends State<WordQuestGame>
           _attempts == 0 ? 0.0 : (_correctAnswers / _attempts) * 100;
 
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Word Quest',
+        'level': 7,
+        'levelName': 'Word Quest',
+        'difficulty': widget.difficulty.label,
         'wordsSolved': _wordsSolved,
+        'roundsToPlay': roundsToPlay,
         'xp': _xp,
         'streak': _bestStreak,
         'currentStreak': _streak,
@@ -976,15 +1011,17 @@ class _WordQuestGameState extends State<WordQuestGame>
                   _buildHudCard(
                     icon: Icons.timer_outlined,
                     title: 'TIME',
-                    value: '${_timeLeft}s',
+                    value: timeLimitPerPuzzle == null ? '∞' : '${_timeLeft}s',
                     valueColor:
-                        _timeLeft <= 10 ? Colors.redAccent : Colors.cyanAccent,
+                        timeLimitPerPuzzle != null && _timeLeft <= 10
+                        ? Colors.redAccent
+                        : Colors.cyanAccent,
                   ),
                   const SizedBox(width: 8),
                   _buildHudCard(
                     icon: Icons.check_circle_outline,
                     title: 'SOLVED',
-                    value: '$_wordsSolved',
+                    value: '$_wordsSolved/$roundsToPlay',
                     valueColor: Colors.greenAccent,
                   ),
                   const SizedBox(width: 8),
@@ -1007,7 +1044,7 @@ class _WordQuestGameState extends State<WordQuestGame>
               const SizedBox(height: 8),
 
               const Text(
-                'FOUR PICS, ONE WORD',
+                'Word Quest',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
@@ -1419,6 +1456,7 @@ class _WordQuestGameState extends State<WordQuestGame>
   Widget _buildResultScreen() {
     final accuracy = _attempts == 0 ? 0.0 : (_correctAnswers / _attempts) * 100;
     final bool solvedAny = _wordsSolved > 0;
+    final bool allRoundsComplete = _wordsSolved >= roundsToPlay;
 
     return Center(
       child: SingleChildScrollView(
@@ -1450,9 +1488,11 @@ class _WordQuestGameState extends State<WordQuestGame>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    solvedAny
-                        ? 'Great effort on Word Quest!'
-                        : 'No words solved this time. Try again!',
+                    allRoundsComplete
+                        ? 'You completed every round!'
+                        : solvedAny
+                            ? 'Great effort on Word Quest!'
+                            : 'No words solved this time. Try again!',
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 14, color: Colors.white70),
                   ),

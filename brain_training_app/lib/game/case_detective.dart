@@ -5,8 +5,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../models/game_difficulty.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
+import '../services/score_identity.dart';
 import '../widgets/pause_menu.dart';
 
 class DetectiveCase {
@@ -29,18 +31,76 @@ class DetectiveCase {
   });
 }
 
+enum DetectiveDifficulty { easy, medium, hard }
+
 class LogicDetective extends StatefulWidget {
-  const LogicDetective({super.key}); 
+  /// The difficulty picked on the level select screen.
+  final GameDifficulty difficulty;
+
+  const LogicDetective({
+    super.key,
+    this.difficulty = GameDifficulty.medium,
+  });
 
   @override
   State<LogicDetective> createState() => _LogicDetectiveState();
 }
 
 class _LogicDetectiveState extends State<LogicDetective> {
-  static const int gameDuration = 60;
-  static const int correctXp = 30;
-  static const int wrongXp = 10;
-  static const int correctScore = 1000;
+  // The difficulty now comes from the level select screen.
+  DetectiveDifficulty get _difficulty {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return DetectiveDifficulty.easy;
+      case GameDifficulty.medium:
+        return DetectiveDifficulty.medium;
+      case GameDifficulty.hard:
+        return DetectiveDifficulty.hard;
+    }
+  }
+
+  int? get _timeLimit {
+    switch (_difficulty) {
+      case DetectiveDifficulty.easy: return null;
+      case DetectiveDifficulty.medium: return 50;
+      case DetectiveDifficulty.hard: return 20;
+    }
+  }
+
+  int get _correctXp {
+    switch (_difficulty) {
+      case DetectiveDifficulty.easy: return 20;
+      case DetectiveDifficulty.medium: return 30;
+      case DetectiveDifficulty.hard: return 50;
+    }
+  }
+
+  int get _wrongXp {
+    switch (_difficulty) {
+      case DetectiveDifficulty.easy: return 5;
+      case DetectiveDifficulty.medium: return 10;
+      case DetectiveDifficulty.hard: return 0;
+    }
+  }
+
+  int get _correctScore {
+    switch (_difficulty) {
+      case DetectiveDifficulty.easy: return 500;
+      case DetectiveDifficulty.medium: return 1000;
+      case DetectiveDifficulty.hard: return 1500;
+    }
+  }
+
+  String get _difficultyName {
+    switch (_difficulty) {
+      case DetectiveDifficulty.easy: return 'Easy';
+      case DetectiveDifficulty.medium: return 'Medium';
+      case DetectiveDifficulty.hard: return 'Hard';
+    }
+  }
+
+  int get _earnedXp => _isCorrect ? _correctXp : _wrongXp;
+  int get _earnedScore => _isCorrect ? _correctScore : 0;
 
   // How long the right/wrong answer stays highlighted before the
   // level complete screen appears.
@@ -64,7 +124,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
   Timer? _timer;
   Timer? _resultsTimer;
 
-  int _timeRemaining = gameDuration;
+  int _timeRemaining = 50;
   int? _selectedAnswer;
 
   bool _isPaused = false;
@@ -169,6 +229,9 @@ class _LogicDetectiveState extends State<LogicDetective> {
     // Pick one random case each time this screen is opened.
     _currentCase = _cases[_random.nextInt(_cases.length)];
 
+    // The difficulty was already chosen on the level select screen,
+    // so the case starts right away.
+    _timeRemaining = _timeLimit ?? 0;
     _initAudio();
     _startTimer();
   }
@@ -190,7 +253,9 @@ class _LogicDetectiveState extends State<LogicDetective> {
   void _startTimer() {
     _timer?.cancel();
 
-    if (_finished || _isPaused) return;
+    if (_finished || _isPaused || _timeLimit == null) {
+      return;
+    }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted || _finished || _isPaused) {
@@ -263,7 +328,9 @@ class _LogicDetectiveState extends State<LogicDetective> {
 
   String get _grade {
     if (!_isCorrect) return 'D';
-    return _timeRemaining >= 30 ? 'S' : 'A';
+    if (_difficulty == DetectiveDifficulty.easy) return 'S';
+    final threshold = _difficulty == DetectiveDifficulty.medium ? 25 : 10;
+    return _timeRemaining >= threshold ? 'S' : 'A';
   }
 
   Future<void> _saveScore({
@@ -273,17 +340,30 @@ class _LogicDetectiveState extends State<LogicDetective> {
     if (!enableScoreSaving) return;
 
     try {
+      final identityFields = await ScoreIdentity.fields();
+
       await FirebaseFirestore.instance.collection('scores').add({
-        'level': 'Insert Detective',
+        ...identityFields,
+        'level': 6,
+        'levelName': 'Logic Detective',
+        // Same format as the other levels.
+        'difficulty': widget.difficulty.label,
         'caseTitle': _currentCase.title,
+        'selectedAnswer': _selectedAnswer == null
+            ? null
+            : _currentCase.choices[_selectedAnswer!],
+        'selectedAnswerIndex': _selectedAnswer,
+        'correctAnswer': _currentCase.choices[_currentCase.correctIndex],
+        'correctAnswerIndex': _currentCase.correctIndex,
         'correct': correct ? 1 : 0,
         'wrongAttempts': correct ? 0 : 1,
-        'score': correct ? correctScore : 0,
-        'xp': correct ? correctXp : wrongXp,
+        'score': correct ? _correctScore : 0,
+        'xp': correct ? _correctXp : _wrongXp,
         'grade': _grade,
         'completed': true,
         'timedOut': timedOut,
-        'timeRemaining': _timeRemaining,
+        'timeLimit': _timeLimit,
+        'timeRemaining': _timeLimit == null ? null : _timeRemaining,
         'timestamp': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 5));
     } catch (e) {
@@ -339,7 +419,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
     }
 
     setState(() {
-      _timeRemaining = gameDuration;
+      _timeRemaining = _timeLimit ?? 0;
       _selectedAnswer = null;
       _finished = false;
       _showResults = false;
@@ -366,6 +446,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
   void _goToMainMenu() {
     _timer?.cancel();
     _resultsTimer?.cancel();
+    audio.stopMusic();
     Navigator.of(context).pop();
   }
 
@@ -526,7 +607,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
   }
 
   Widget _buildStats() {
-    final int earnedXp = _finished ? (_isCorrect ? correctXp : wrongXp) : 0;
+    final int earnedXp = _finished ? _earnedXp : 0;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -534,11 +615,13 @@ class _LogicDetectiveState extends State<LogicDetective> {
         children: [
           _buildStat(
             'TIME',
-            '${_timeRemaining}s',
-            _timeRemaining <= 10 ? Colors.redAccent : Colors.cyanAccent,
+            _timeLimit == null ? '∞' : '${_timeRemaining}s',
+            _timeLimit != null && _timeRemaining <= 10
+                ? Colors.redAccent
+                : Colors.cyanAccent,
           ),
           const SizedBox(width: 5),
-          _buildStat('LEVEL', '7', Colors.amber),
+          _buildStat('LEVEL', '6', Colors.amber),
           const SizedBox(width: 5),
           _buildStat('XP', '$earnedXp', Colors.greenAccent),
         ],
@@ -978,15 +1061,20 @@ class _LogicDetectiveState extends State<LogicDetective> {
                         const Divider(color: Colors.white12),
                         _buildStatRow(
                           'XP Earned:',
-                          '+${_isCorrect ? correctXp : wrongXp}',
+                          '+$_earnedXp',
                         ),
                         const Divider(color: Colors.white12),
                         _buildStatRow(
                           'Score:',
-                          '${_isCorrect ? correctScore : 0} / $correctScore',
+                          '$_earnedScore / $_correctScore',
                         ),
                         const Divider(color: Colors.white12),
-                        _buildStatRow('Time Left:', '${_timeRemaining}s'),
+                        _buildStatRow('Difficulty:', _difficultyName),
+                        const Divider(color: Colors.white12),
+                        _buildStatRow(
+                          'Time Left:',
+                          _timeLimit == null ? 'Unlimited' : '${_timeRemaining}s',
+                        ),
                       ],
                     ),
                   ),

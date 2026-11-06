@@ -19,6 +19,11 @@ import '../services/menu_music.dart';
 import '../widgets/game_loading_screen.dart';
 import '../widgets/menu_options.dart';
 
+/// When true, the next screen pushed on top of the level select screen
+/// (the profile editor) will NOT pause the menu music.
+/// It is switched on right before opening the profile editor.
+bool _keepMenuMusicOnNextPush = false;
+
 class LevelSelectScreen extends StatefulWidget {
   const LevelSelectScreen({super.key});
 
@@ -28,6 +33,10 @@ class LevelSelectScreen extends StatefulWidget {
 
 class _LevelSelectScreenState extends State<LevelSelectScreen>
     with RouteAware {
+  /// True only when this screen paused the music itself, so the music is
+  /// restarted only when it was actually paused.
+  bool _musicPausedByPush = false;
+
   @override
   void initState() {
     super.initState();
@@ -79,12 +88,25 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
 
   @override
   void didPushNext() {
+    // The profile editor keeps the menu music playing.
+    if (_keepMenuMusicOnNextPush) {
+      _keepMenuMusicOnNextPush = false;
+      _musicPausedByPush = false;
+      return;
+    }
+
+    // Games and other screens pause the menu music as before.
     MenuMusic.instance.pause();
+    _musicPausedByPush = true;
   }
 
   @override
   void didPopNext() {
-    MenuMusic.instance.restart();
+    // Only restart the music if this screen paused it.
+    if (_musicPausedByPush) {
+      _musicPausedByPush = false;
+      MenuMusic.instance.restart();
+    }
   }
 
   @override
@@ -156,7 +178,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 24, 0),
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -235,49 +257,14 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       ),
                     ),
                     const SizedBox(width: 12),
+                    // Settings button (it takes the place of the old
+                    // 18/18 stars badge).
                     _build3DButton(
                       onTap: () => showMenuOptions(context),
                       child: const Icon(
                         Icons.settings_rounded,
                         color: Colors.white,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.shade700,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black38,
-                            offset: Offset(0, 3),
-                            blurRadius: 4,
-                          ),
-                        ],
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.star_rounded,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            '18/18',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
+                        size: 28,
                       ),
                     ),
                   ],
@@ -678,11 +665,21 @@ class PlayerProfileButton extends StatelessWidget {
                     ),
                     onPressed: () {
                       Navigator.pop(sheetContext);
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const AuthScreen(),
-                        ),
-                      );
+
+                      // Keep the menu music playing while the profile
+                      // is being edited.
+                      _keepMenuMusicOnNextPush = true;
+
+                      Navigator.of(context)
+                          .push(
+                            MaterialPageRoute(
+                              builder: (_) => const AuthScreen(),
+                            ),
+                          )
+                          .whenComplete(() {
+                        // Safety reset in case the flag was never used.
+                        _keepMenuMusicOnNextPush = false;
+                      });
                     },
                   ),
                 ),
@@ -872,8 +869,14 @@ class _GameLevelCardState extends State<GameLevelCard> {
                 ? PatternSequence(difficulty: selectedDifficulty)
                 : widget.levelNum == '5'
                     ? MemoryMatrix(difficulty: selectedDifficulty)
-                    : widget.page;
-
+                    : widget.levelNum == '6'
+                        ? LogicDetective(difficulty: selectedDifficulty)
+                        : widget.levelNum == '7'
+                            ? WordQuestGame(difficulty: selectedDifficulty)
+                            : widget.levelNum == '8'
+                                ? PathFinder(difficulty: selectedDifficulty)
+                                : widget.page;
+                        
     Navigator.push(
       context,
       MaterialPageRoute(

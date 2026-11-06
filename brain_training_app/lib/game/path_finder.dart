@@ -7,18 +7,25 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
 import '../widgets/pause_menu.dart';
 
 class PathFinder extends StatefulWidget {
-  const PathFinder({super.key});
+  final GameDifficulty difficulty;
+
+  const PathFinder({super.key, this.difficulty = GameDifficulty.medium});
 
   @override
   State<PathFinder> createState() => _PathFinderState();
 }
 
 class _PathFinderState extends State<PathFinder> {
-  static const int maxRounds = 5;
+  int get maxRounds => switch (widget.difficulty) {
+        GameDifficulty.easy => 3,
+        GameDifficulty.medium => 3,
+        GameDifficulty.hard => 5,
+      };
   static const int startingLives = 3;
 
   static const Color wallColor = Color(0xFF3A0F52);
@@ -315,6 +322,19 @@ class _PathFinderState extends State<PathFinder> {
   // ROUND SETTINGS
   // ============================================================
 
+  int _settingsRoundForCurrentRound() {
+    switch (widget.difficulty) {
+      case GameDifficulty.easy:
+        return currentRound <= 2 ? 1 : 2;
+      case GameDifficulty.medium:
+        return currentRound; // Existing rounds 1, 2, and 3.
+      case GameDifficulty.hard:
+        if (currentRound == 1) return 1;
+        if (currentRound <= 3) return 2;
+        return currentRound - 1; // Rounds 4 and 5 use settings 3 and 4.
+    }
+  }
+
   int _sizeForRound(int round) {
     switch (round) {
       case 1:
@@ -337,10 +357,11 @@ class _PathFinderState extends State<PathFinder> {
     if (isGameOver || lives <= 0) return;
     gameTimer?.cancel();
 
-    mazeSize = _sizeForRound(currentRound);
+    final settingsRound = _settingsRoundForCurrentRound();
+    mazeSize = _sizeForRound(settingsRound);
     goal = Point<int>(mazeSize - 2, mazeSize - 2);
-    previewTimeLimit = _previewSecondsForRound(currentRound);
-    solveTimeLimit = _solveSecondsForRound(currentRound);
+    previewTimeLimit = _previewSecondsForRound(settingsRound);
+    solveTimeLimit = _solveSecondsForRound(settingsRound);
     maze = _generateFreshMaze(mazeSize);
     tracedPath = [start];
     isPreview = true;
@@ -677,6 +698,7 @@ class _PathFinderState extends State<PathFinder> {
       await FirebaseFirestore.instance.collection('scores').add({
         'level': 8,
         'levelName': 'Path Finder',
+        'difficulty': widget.difficulty.label,
         'completed': roundsCompleted == maxRounds,
         'roundsCompleted': roundsCompleted,
         'totalRounds': maxRounds,
@@ -1166,14 +1188,24 @@ class _MazePainter extends CustomPainter {
               : hiddenColor;
         canvas.drawRect(rect, paint);
         paint
-          ..color = Colors.white.withValues(alpha: 0.05)
+          ..color = !revealMaze
+              ? Colors.white.withValues(alpha: 0.28)
+              : maze[y][x]
+                  ? const Color(0xFF3A0F52).withValues(alpha: 0.30)
+                  : Colors.white.withValues(alpha: 0.24)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.6;
+          ..strokeWidth = max(1.2, cellSize * 0.035);
         canvas.drawRect(rect, paint);
       }
     }
 
     if (tracedPath.isNotEmpty) {
+      final pathOutlinePaint = Paint()
+        ..color = const Color(0xFF14051F).withValues(alpha: 0.9)
+        ..strokeWidth = cellSize * 0.68
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
       final pathPaint = Paint()
         ..color = showTryAgain ? mistakePathColor : pathColor
         ..strokeWidth = cellSize * 0.42
@@ -1187,6 +1219,9 @@ class _MazePainter extends CustomPainter {
         final point = tracedPath[i];
         path.lineTo((point.x + 0.5) * cellSize, (point.y + 0.5) * cellSize);
       }
+      // A dark outline keeps the bright route visible across both the
+      // pale corridors and dark walls.
+      canvas.drawPath(path, pathOutlinePaint);
       canvas.drawPath(path, pathPaint);
     }
 

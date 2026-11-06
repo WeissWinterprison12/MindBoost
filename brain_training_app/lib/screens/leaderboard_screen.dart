@@ -34,9 +34,26 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     'AceSolver',
   ];
 
+  static const List<String> gameNames = [
+    'Math Game',
+    'Science Puzzle',
+    'Memory Match',
+    'Pattern Sequence',
+    'Memory Matrix',
+    'Logic Detective',
+    'Word Quest',
+    'Path Finder',
+  ];
+
   static const Color gold = Color(0xFFFFD700);
 
+  /// Every player's scores (needs Firestore rules that allow reading
+  /// the whole `scores` collection).
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _scores;
+
+  /// Only this player's scores. Used as a fallback when the full
+  /// collection cannot be read, so your own XP still shows up.
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _myScores;
 
   PlayerIdentity? _me;
 
@@ -53,9 +70,15 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     try {
       final me = await ScoreIdentity.load();
       if (!mounted) return;
-      setState(() => _me = me);
+      setState(() {
+        _me = me;
+        _myScores = FirebaseFirestore.instance
+            .collection('scores')
+            .where('playerId', isEqualTo: me.id)
+            .snapshots();
+      });
     } catch (e) {
-      debugPrint('Could not load player identity: $e');
+      debugPrint('LEADERBOARD: could not load player identity: $e');
     }
   }
 
@@ -73,16 +96,39 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     final random = Random(20261029);
 
     return List.generate(rivalNames.length, (i) {
+      final plays = 6 + random.nextInt(19);
+      var totalXp = 0;
+
+      for (var play = 0; play < plays; play++) {
+        final game = gameNames[random.nextInt(gameNames.length)];
+        totalXp += _sampleXpForGame(game, random);
+      }
+
       return BoardEntry(
         playerId: 'sample_$i',
         name: rivalNames[i],
         avatar: i % kAvatarCount,
-        totalXp: 120 + random.nextInt(900),
-        plays: 6 + random.nextInt(25),
+        totalXp: totalXp,
+        plays: plays,
         isYou: false,
         isSample: true,
       );
     });
+  }
+
+  int _sampleXpForGame(String game, Random random) {
+    final (minimum, maximum) = switch (game) {
+      'Math Game' => (100, 180),
+      'Science Puzzle' => (40, 100),
+      'Memory Match' => (25, 75),
+      'Pattern Sequence' => (30, 90),
+      'Memory Matrix' => (30, 80),
+      'Logic Detective' => (20, 50),
+      'Word Quest' => (40, 140),
+      'Path Finder' => (60, 180),
+      _ => (20, 60),
+    };
+    return minimum + random.nextInt(maximum - minimum + 1);
   }
 
   int _compare(BoardEntry a, BoardEntry b) {
@@ -97,12 +143,16 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
     final totals = <String, _Totals>{};
+    int skipped = 0;
 
     for (final doc in docs) {
       final data = doc.data();
       final id = data['playerId']?.toString() ?? '';
 
-      if (id.isEmpty) continue; // older scores without a player
+      if (id.isEmpty) {
+        skipped++; // older scores without a player
+        continue;
+      }
 
       final t = totals.putIfAbsent(id, () => _Totals());
 
@@ -115,6 +165,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       final avatar = data['avatar'];
       if (avatar is int) t.avatar = avatar;
     }
+
+    debugPrint(
+      'LEADERBOARD: ${docs.length} scores loaded, $skipped without '
+      'playerId, ${totals.length} players, my id = ${_me?.id}',
+    );
 
     final entries = _makeRivals();
 
@@ -183,14 +238,19 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _scores,
             builder: (context, snapshot) {
-              final bool loadError = snapshot.hasError;
+              if (snapshot.hasError) {
+                // The reason is printed in the console: look for
+                // "LEADERBOARD error". "permission-denied" means the
+                // Firestore rules do not allow reading all scores.
+                debugPrint('LEADERBOARD error: ${snapshot.error}');
+                return _buildFallback(snapshot.error);
+              }
 
-              final List<BoardEntry> ranking =
-                  (loadError || snapshot.data == null)
-                      ? (_makeRivals()..sort(_compare))
-                      : _buildRanking(snapshot.data!.docs);
+              final List<BoardEntry> ranking = snapshot.data == null
+                  ? (_makeRivals()..sort(_compare))
+                  : _buildRanking(snapshot.data!.docs);
 
-              return _buildContent(ranking, loadError: loadError);
+              return _buildContent(ranking);
             },
           ),
         ),
@@ -198,12 +258,52 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     );
   }
 
+  /// Used when the full scores collection cannot be read.
+  /// Shows sample players plus the player's own saved scores.
+  Widget _buildFallback(Object? error) {
+    final bool denied = error.toString().contains('permission-denied');
+
+    final String notice = denied
+        ? 'Live ranking is blocked by Firestore rules. '
+            'Showing your own scores with sample players.'
+        : 'Could not load all scores. '
+            'Showing your own scores with sample players.';
+
+    final mine = _myScores;
+
+    if (mine == null) {
+      return _buildContent(
+        _makeRivals()..sort(_compare),
+        notice: notice,
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: mine,
+      builder: (context, mySnapshot) {
+        if (mySnapshot.hasError) {
+          debugPrint('LEADERBOARD own-scores error: ${mySnapshot.error}');
+        }
+
+        final List<BoardEntry> ranking = mySnapshot.data == null
+            ? (_makeRivals()..sort(_compare))
+            : _buildRanking(mySnapshot.data!.docs);
+
+        return _buildContent(ranking, notice: notice);
+      },
+    );
+  }
+
   Widget _buildContent(
     List<BoardEntry> ranking, {
-    required bool loadError,
+    String? notice,
   }) {
     final int myIndex = ranking.indexWhere((e) => e.isYou);
     final List<BoardEntry> top = ranking.take(maxEntries).toList();
+
+    // If the player is outside the top list, their row is pinned
+    // under the list so they can always see their real rank.
+    final bool pinMe = myIndex >= maxEntries;
 
     return Column(
       children: [
@@ -216,12 +316,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ),
         const SizedBox(height: 14),
         _buildSectionLabel(),
-        if (loadError)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
+        if (notice != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 6, 24, 0),
             child: Text(
-              'Could not load saved scores. Showing sample players.',
-              style: TextStyle(
+              notice,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
                 color: Color(0xFFFF8A65),
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -239,13 +340,26 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               ),
               border: Border.all(color: Colors.white12),
             ),
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
-              physics: const BouncingScrollPhysics(),
-              itemCount: top.length,
-              itemBuilder: (context, index) {
-                return _buildRow(top[index], index + 1);
-              },
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: top.length,
+                    itemBuilder: (context, index) {
+                      return _buildRow(top[index], index + 1);
+                    },
+                  ),
+                ),
+                if (pinMe) ...[
+                  const Divider(color: Colors.white24, height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 2),
+                    child: _buildRow(ranking[myIndex], myIndex + 1),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
@@ -268,59 +382,25 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _roundButton(
-            icon: Icons.arrow_back_rounded,
-            onTap: () => Navigator.pop(context),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 8,
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 8,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(30),
-              border: Border.all(color: gold, width: 2),
-            ),
-            child: const Text(
-              'LEADERBOARD',
-              style: TextStyle(
-                color: gold,
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.5,
-              ),
-            ),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: gold, width: 2),
           ),
-          const SizedBox(width: 48),
-        ],
-      ),
-    );
-  }
-
-  Widget _roundButton({
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF4081),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(color: Color(0xFF990033), offset: Offset(0, 4)),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Icon(icon, color: Colors.white, size: 28),
+          child: const Text(
+            'LEADERBOARD',
+            style: TextStyle(
+              color: gold,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.5,
+            ),
           ),
         ),
       ),
@@ -550,9 +630,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   ),
                 ),
                 Text(
-                  entry.isSample
-                      ? 'Sample player'
-                      : '${entry.plays} games played',
+                  '${entry.plays} games played',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white54,
                     fontSize: 11,

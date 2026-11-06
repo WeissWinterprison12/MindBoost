@@ -9,6 +9,7 @@ import 'screens/auth_screen.dart';
 import 'services/menu_music.dart';
 import 'widgets/menu_options.dart';
 import 'screens/leaderboard_screen.dart';
+import 'screens/how_to_play.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -84,116 +85,11 @@ class HomeScreen extends StatelessWidget {
   }
 
   // HOW TO PLAY SHEET
+    // HOW TO PLAY
+  // Opens as a full page, the same way Edit Profile opens.
   void _showHowToPlay(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetContext).size.height * 0.85,
-          ),
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-          decoration: const BoxDecoration(
-            color: Color(0xFFFFFBFF),
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(28),
-            ),
-          ),
-          child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 42,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'HOW TO PLAY',
-                  style: TextStyle(
-                    color: Color(0xFF4A0E4E),
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Flexible(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        _HowToStep(
-                          number: 1,
-                          icon: Icons.person_rounded,
-                          title: 'Create your player',
-                          text:
-                              'Tap START GAME, pick an avatar and a player name. You only do this once.',
-                        ),
-                        _HowToStep(
-                          number: 2,
-                          icon: Icons.grid_view_rounded,
-                          title: 'Pick a puzzle',
-                          text:
-                              'Choose any level on the Level Select screen. Each one trains a different skill: math, memory, logic, words and more.',
-                        ),
-                        _HowToStep(
-                          number: 3,
-                          icon: Icons.timer_rounded,
-                          title: 'Think fast, answer smart',
-                          text:
-                              'Read the instructions at the start of each game and answer as accurately as you can.',
-                        ),
-                        _HowToStep(
-                          number: 4,
-                          icon: Icons.star_rounded,
-                          title: 'Earn stars',
-                          text:
-                              'Play well to earn up to 3 stars per level. Replay levels to improve your score!',
-                        ),
-                        _HowToStep(
-                          number: 5,
-                          icon: Icons.settings_rounded,
-                          title: 'Make it yours',
-                          text:
-                              'Use OPTIONS to change the music volume, and tap your profile to edit your name or avatar.',
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF811252),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () => Navigator.pop(sheetContext),
-                    child: const Text(
-                      'GOT IT!',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const HowToPlayScreen()),
     );
   }
 
