@@ -10,6 +10,7 @@ import 'services/menu_music.dart';
 import 'widgets/menu_options.dart';
 import 'screens/leaderboard_screen.dart';
 import 'screens/how_to_play.dart';
+import 'screens/main_loading_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,13 +35,17 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'MindBoost',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(  
+        colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF806BC4),
         ),
         useMaterial3: true,
       ),
       navigatorObservers: [menuRouteObserver],
-      home: const HomeScreen(),
+
+      // NEW STARTUP LOADING SCREEN
+      home: const MainLoadingScreen(
+        nextScreen: HomeScreen(),
+      ),
     );
   }
 }
