@@ -71,7 +71,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
       }, SetOptions(merge: true));
 
       if (mounted) setState(() {});
-      debugPrint('Player profile synced to Firebase.');
+      debugPrint('Profile Saved.');
     } catch (error) {
       debugPrint('Profile sync skipped: $error');
     }

@@ -655,7 +655,7 @@ class _MathGameState extends State<MathGame> {
         height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF7564B8), Color(0xFF806BC4), Color(0xFF5B4A98)],
+            colors: [Color(0xFF4A0E4E), Color(0xFF811252), Color(0xFF2E0854)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),

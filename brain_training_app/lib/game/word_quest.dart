@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
+import '../services/score_identity.dart';
 import '../widgets/pause_menu.dart';
 
 class WordPuzzle {
@@ -276,10 +277,34 @@ class _WordQuestGameState extends State<WordQuestGame>
         soundVolume = settings.soundVolume;
       });
 
+      // Must run before any sound plays, so sound effects never take
+      // the audio focus away from the background music.
+      await _configureAudio();
+
       await _player.setVolume(soundVolume);
       await _startBackgroundMusic();
     } catch (e) {
       debugPrint('Could not initialize Word Quest audio: $e');
+    }
+  }
+
+  /// Lets the music and the sound effects play at the same time.
+  /// Without this, playing an effect (like the "correct" sound) makes
+  /// the system take the audio focus and the music stops.
+  Future<void> _configureAudio() async {
+    final audioContext = AudioContext(
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.mixWithOthers},
+      ),
+      android: AudioContextAndroid(audioFocus: AndroidAudioFocus.none),
+    );
+
+    try {
+      await _musicPlayer.setAudioContext(audioContext);
+      await _player.setAudioContext(audioContext);
+    } catch (e) {
+      debugPrint('Could not set audio mixing: $e');
     }
   }
 
@@ -318,6 +343,26 @@ class _WordQuestGameState extends State<WordQuestGame>
       }
     } catch (e) {
       debugPrint('Could not resume Word Quest music: $e');
+    }
+  }
+
+  /// Safety net: if anything made the music stop while it should be
+  /// playing, start it again.
+  Future<void> _keepMusicPlaying() async {
+    if (!mounted ||
+        musicVolume <= 0.0 ||
+        _musicStoppedForMute ||
+        _isPaused ||
+        _isFinished) {
+      return;
+    }
+
+    try {
+      if (_musicPlayer.state != PlayerState.playing) {
+        await _musicPlayer.resume();
+      }
+    } catch (_) {
+      // The music is not essential; the game keeps going.
     }
   }
 
@@ -365,12 +410,17 @@ class _WordQuestGameState extends State<WordQuestGame>
 
   Future<void> _playSound(String assetName) async {
     try {
-      await _player.stop();
-      await _player.setVolume(soundVolume);
-      await _player.play(AssetSource(assetName));
+      if (soundVolume > 0) {
+        await _player.stop();
+        await _player.setVolume(soundVolume);
+        await _player.play(AssetSource(assetName));
+      }
     } catch (e) {
       debugPrint('Audio error: $e');
     }
+
+    // A sound effect must never silence the background music.
+    await _keepMusicPlaying();
   }
 
   // ============================================================
@@ -473,10 +523,12 @@ class _WordQuestGameState extends State<WordQuestGame>
       _feedback = '';
     });
 
-    _playSound('sounds/pop.mp3');
-
     if (_answerSlots.every((slot) => slot != null)) {
+      // The last letter: only the correct / wrong sound plays, so the
+      // two sounds never cut each other off.
       _checkAnswer();
+    } else {
+      _playSound('sounds/pop.mp3');
     }
   }
 
@@ -530,7 +582,8 @@ class _WordQuestGameState extends State<WordQuestGame>
         _lastAnswerCorrect = true;
       });
 
-      _playSound('sounds/click.mp3');
+      // Correct answer sound.
+      _playSound('sounds/correct.mp3');
 
       await Future<void>.delayed(const Duration(seconds: 1));
 
@@ -554,6 +607,8 @@ class _WordQuestGameState extends State<WordQuestGame>
       });
 
       _shakeController.forward(from: 0.0);
+
+      // Wrong answer sound.
       _playSound('sounds/wrong.mp3');
 
       await Future<void>.delayed(const Duration(milliseconds: 650));
@@ -656,10 +711,11 @@ class _WordQuestGameState extends State<WordQuestGame>
       _lastAnswerCorrect = true;
     });
 
-    _playSound('sounds/pop.mp3');
-
     if (_answerSlots.every((slot) => slot != null)) {
+      // The hint filled the last box: only the correct / wrong sound plays.
       _checkAnswer();
+    } else {
+      _playSound('sounds/pop.mp3');
     }
   }
 
@@ -698,6 +754,8 @@ class _WordQuestGameState extends State<WordQuestGame>
 
   void _restartGame() {
     _timer?.cancel();
+    _shakeController.reset();
+    _confetti.stop();
 
     setState(() {
       _timeLeft = timeLimitPerPuzzle ?? 0;
@@ -725,7 +783,10 @@ class _WordQuestGameState extends State<WordQuestGame>
     });
 
     _startTimer();
-    _resumeBackgroundMusic();
+
+    // After a finished game the music was paused (or never restarted),
+    // so start it again from the beginning.
+    _startBackgroundMusic();
   }
 
   // ============================================================
@@ -762,7 +823,11 @@ class _WordQuestGameState extends State<WordQuestGame>
       final accuracy =
           _attempts == 0 ? 0.0 : (_correctAnswers / _attempts) * 100;
 
+      // Player identity, so this score counts on the leaderboard.
+      final identityFields = await ScoreIdentity.fields();
+
       await FirebaseFirestore.instance.collection('scores').add({
+        ...identityFields,
         'level': 7,
         'levelName': 'Word Quest',
         'difficulty': widget.difficulty.label,

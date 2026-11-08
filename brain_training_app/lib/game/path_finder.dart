@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 
 import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
+import '../services/score_identity.dart';
 import '../widgets/pause_menu.dart';
+import '../widgets/player_avatar.dart';
 
 class PathFinder extends StatefulWidget {
   final GameDifficulty difficulty;
@@ -60,8 +62,12 @@ class _PathFinderState extends State<PathFinder> {
   List<List<bool>> maze = [];
   List<Point<int>> tracedPath = [];
 
-  final Point<int> start = const Point<int>(1, 1);
+  // Start and finish are picked at random for every maze.
+  Point<int> start = const Point<int>(1, 1);
   Point<int> goal = const Point<int>(5, 5);
+
+  // The player's avatar, shown on the start cell.
+  int playerAvatar = 0;
 
   bool isPreview = true;
   bool isMistakeReveal = false;
@@ -79,6 +85,19 @@ class _PathFinderState extends State<PathFinder> {
     super.initState();
     _prepareRound();
     _initAudio();
+    _loadPlayerAvatar();
+  }
+
+  /// Uses the same avatar the player picked in their profile
+  /// (the one shown on the level select screen).
+  Future<void> _loadPlayerAvatar() async {
+    try {
+      final me = await ScoreIdentity.load();
+      if (!mounted) return;
+      setState(() => playerAvatar = me.avatar);
+    } catch (error) {
+      debugPrint('Could not load player avatar: $error');
+    }
   }
 
   @override
@@ -105,11 +124,34 @@ class _PathFinderState extends State<PathFinder> {
         soundVolume = AudioSettings.instance.soundVolume;
       });
 
+      // Must run before any sound plays, so effects never take the
+      // audio focus away from the background music.
+      await _configureAudio();
+
       await musicPlayer.setReleaseMode(ReleaseMode.loop);
       await audioPlayer.setVolume(soundVolume);
       await _startBackgroundMusic();
     } catch (error) {
       debugPrint('Could not initialize Path Finder audio: $error');
+    }
+  }
+
+  /// Lets the music and the sound effects play at the same time.
+  /// Without this, playing an effect (like the "correct" sound) makes
+  /// the system take the audio focus and the music stops.
+  Future<void> _configureAudio() async {
+    final audioContext = AudioContext(
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.mixWithOthers},
+      ),
+      android: AudioContextAndroid(audioFocus: AndroidAudioFocus.none),
+    );
+    try {
+      await musicPlayer.setAudioContext(audioContext);
+      await audioPlayer.setAudioContext(audioContext);
+    } catch (error) {
+      debugPrint('Could not set audio mixing: $error');
     }
   }
 
@@ -134,6 +176,25 @@ class _PathFinderState extends State<PathFinder> {
       await musicPlayer.resume();
     } catch (_) {
       await _startBackgroundMusic();
+    }
+  }
+
+  /// Safety net: if anything made the music stop while it should be
+  /// playing, start it again.
+  Future<void> _keepMusicPlaying() async {
+    if (!mounted ||
+        musicVolume <= 0 ||
+        isGameOver ||
+        isPaused ||
+        showOptions) {
+      return;
+    }
+    try {
+      if (musicPlayer.state != PlayerState.playing) {
+        await musicPlayer.resume();
+      }
+    } catch (_) {
+      // The music is not essential; the game keeps going.
     }
   }
 
@@ -182,59 +243,150 @@ class _PathFinderState extends State<PathFinder> {
     setState(() => showOptions = false);
   }
 
-  Widget _buildVolumeSlider({
+  // OPTIONS SCREEN (same design as the Math game)
+  Widget _buildOptionsScreen() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF4A0E4E), Color(0xFF811252), Color(0xFF2E0854)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(22),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3B0B46).withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: const Color(0xFFFFD700),
+                      width: 3,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black45,
+                        blurRadius: 18,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '⚙️ OPTIONS',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFFFD700),
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Adjust your game audio',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      _buildOptionsVolumeSlider(
+                        title: '🎵 Background Music',
+                        value: musicVolume,
+                        onChanged: changeMusicVolume,
+                      ),
+                      const SizedBox(height: 22),
+                      _buildOptionsVolumeSlider(
+                        title: '🔊 Sound Effects',
+                        value: soundVolume,
+                        onChanged: changeSoundVolume,
+                      ),
+                      const SizedBox(height: 30),
+                      _buildOptionsButton(
+                        text: '← Back',
+                        color: const Color(0xFFFFD700),
+                        shadowColor: const Color(0xFFB8860B),
+                        textColor: const Color(0xFF3B0B46),
+                        onPressed: _hideGameOptions,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionsVolumeSlider({
     required String title,
-    required IconData icon,
     required double value,
     required ValueChanged<double> onChanged,
   }) {
+    final percentage = (value * 100).round();
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(
+          color: const Color(0xFFFFD700).withValues(alpha: 0.65),
+          width: 1.5,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: Colors.amber, size: 22),
-              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   title,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
                   ),
                 ),
               ),
               Text(
-                '${(value * 100).round()}%',
+                '$percentage%',
                 style: const TextStyle(
-                  color: Colors.amber,
+                  color: Color(0xFFFFD700),
                   fontWeight: FontWeight.w900,
-                  fontSize: 15,
+                  fontSize: 17,
                 ),
               ),
             ],
           ),
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              activeTrackColor: Colors.amber,
+              activeTrackColor: const Color(0xFFFFD700),
               inactiveTrackColor: Colors.white24,
               thumbColor: Colors.white,
-              overlayColor: Colors.amber.withValues(alpha: 0.2),
-              trackHeight: 5,
+              overlayColor: const Color(0xFFFFD700).withValues(alpha: 0.18),
+              trackHeight: 6,
             ),
             child: Slider(
               value: value.clamp(0.0, 1.0),
               min: 0,
               max: 1,
-              divisions: 20,
+              divisions: 100,
+              label: '$percentage%',
               onChanged: onChanged,
             ),
           ),
@@ -243,78 +395,19 @@ class _PathFinderState extends State<PathFinder> {
     );
   }
 
-  Widget _buildOptionsScreen() {
-    return Positioned.fill(
-      child: Container(
-        color: const Color(0xF52E0854),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 430),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.settings_rounded,
-                        color: Colors.amber, size: 54),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'OPTIONS',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Adjust your game audio',
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
-                    const SizedBox(height: 26),
-                    _buildVolumeSlider(
-                      title: 'Background Music',
-                      icon: Icons.music_note_rounded,
-                      value: musicVolume,
-                      onChanged: (value) => changeMusicVolume(value),
-                    ),
-                    const SizedBox(height: 14),
-                    _buildVolumeSlider(
-                      title: 'Sound Effects',
-                      icon: Icons.volume_up_rounded,
-                      value: soundVolume,
-                      onChanged: (value) => changeSoundVolume(value),
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton.icon(
-                        onPressed: _hideGameOptions,
-                        icon: const Icon(Icons.arrow_back_rounded),
-                        label: const Text('BACK TO PAUSE MENU'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF7B2CBF),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+  Widget _buildOptionsButton({
+    required String text,
+    required Color color,
+    required Color shadowColor,
+    required Color textColor,
+    required VoidCallback onPressed,
+  }) {
+    return _3DButton(
+      text: text,
+      color: color,
+      shadowColor: shadowColor,
+      textColor: textColor,
+      onPressed: onPressed,
     );
   }
 
@@ -359,10 +452,14 @@ class _PathFinderState extends State<PathFinder> {
 
     final settingsRound = _settingsRoundForCurrentRound();
     mazeSize = _sizeForRound(settingsRound);
-    goal = Point<int>(mazeSize - 2, mazeSize - 2);
     previewTimeLimit = _previewSecondsForRound(settingsRound);
     solveTimeLimit = _solveSecondsForRound(settingsRound);
-    maze = _generateFreshMaze(mazeSize);
+
+    // Random start anywhere on the map, then a maze grown from it,
+    // then a random finish that is a good distance away.
+    start = _randomCell(mazeSize);
+    maze = _generateFreshMaze(mazeSize, start);
+    goal = _pickGoal(maze, start);
     tracedPath = [start];
     isPreview = true;
     isMistakeReveal = false;
@@ -380,12 +477,73 @@ class _PathFinderState extends State<PathFinder> {
   // MAZE GENERATION
   // ============================================================
 
-  List<List<bool>> _generateMaze(int size) {
+  /// A random cell centre. Cells sit on odd coordinates (1, 3, 5 ...),
+  /// so every corridor junction on the map can be picked.
+  Point<int> _randomCell(int size) {
+    final int cellsPerSide = (size - 1) ~/ 2;
+    return Point<int>(
+      1 + 2 * random.nextInt(cellsPerSide),
+      1 + 2 * random.nextInt(cellsPerSide),
+    );
+  }
+
+  /// Picks the finish at random among the cells that are far from the
+  /// start (at least 60% of the longest possible route), so the finish
+  /// can be anywhere on the map but is never right next to the start.
+  Point<int> _pickGoal(List<List<bool>> grid, Point<int> origin) {
+    final int size = grid.length;
+    final dist = List.generate(size, (_) => List<int>.filled(size, -1));
+    final queue = <Point<int>>[origin];
+    dist[origin.y][origin.x] = 0;
+
+    const steps = <Point<int>>[
+      Point<int>(0, -1),
+      Point<int>(0, 1),
+      Point<int>(-1, 0),
+      Point<int>(1, 0),
+    ];
+
+    int head = 0;
+    while (head < queue.length) {
+      final current = queue[head++];
+      for (final step in steps) {
+        final int nx = current.x + step.x;
+        final int ny = current.y + step.y;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        if (!grid[ny][nx] || dist[ny][nx] != -1) continue;
+        dist[ny][nx] = dist[current.y][current.x] + 1;
+        queue.add(Point<int>(nx, ny));
+      }
+    }
+
+    int maxDistance = 0;
+    for (int y = 1; y < size - 1; y += 2) {
+      for (int x = 1; x < size - 1; x += 2) {
+        if (dist[y][x] > maxDistance) maxDistance = dist[y][x];
+      }
+    }
+
+    final int minDistance = max(1, (maxDistance * 0.6).ceil());
+    final candidates = <Point<int>>[];
+    for (int y = 1; y < size - 1; y += 2) {
+      for (int x = 1; x < size - 1; x += 2) {
+        if (dist[y][x] >= minDistance) candidates.add(Point<int>(x, y));
+      }
+    }
+
+    if (candidates.isEmpty) {
+      // Cannot happen in a normal maze; keeps the game safe anyway.
+      return Point<int>(size - 2, size - 2);
+    }
+    return candidates[random.nextInt(candidates.length)];
+  }
+
+  List<List<bool>> _generateMaze(int size, Point<int> origin) {
     final grid = List.generate(size, (_) => List<bool>.filled(size, false));
     final visited = <Point<int>>{};
-    final stack = <Point<int>>[start];
-    grid[start.y][start.x] = true;
-    visited.add(start);
+    final stack = <Point<int>>[origin];
+    grid[origin.y][origin.x] = true;
+    visited.add(origin);
 
     const directions = <Point<int>>[
       Point<int>(0, -2),
@@ -425,20 +583,18 @@ class _PathFinderState extends State<PathFinder> {
       stack.add(next);
     }
 
-    grid[start.y][start.x] = true;
-    grid[goal.y][goal.x] = true;
     return grid;
   }
 
-  List<List<bool>> _generateFreshMaze(int size) {
+  List<List<bool>> _generateFreshMaze(int size, Point<int> origin) {
     for (int attempt = 0; attempt < 100; attempt++) {
-      final candidate = _generateMaze(size);
+      final candidate = _generateMaze(size, origin);
       final signature = candidate
           .map((row) => row.map((cell) => cell ? '1' : '0').join())
           .join();
       if (usedMazeSignatures.add(signature)) return candidate;
     }
-    return _generateMaze(size);
+    return _generateMaze(size, origin);
   }
 
   // ============================================================
@@ -481,6 +637,8 @@ class _PathFinderState extends State<PathFinder> {
     } catch (_) {
       // Missing audio must not interrupt gameplay.
     }
+    // The effect must never silence the background music.
+    await _keepMusicPlaying();
   }
 
   // ============================================================
@@ -686,16 +844,24 @@ class _PathFinderState extends State<PathFinder> {
   Future<void> _finishGame() async {
     if (isGameOver) return;
     gameTimer?.cancel();
-    await musicPlayer.pause();
+
+    // Mark the game as over right away, so no sound effect can bring
+    // the music back on the result screen.
     setState(() {
       isGameOver = true;
       isPaused = false;
       showOptions = false;
     });
 
+    await musicPlayer.pause();
+
     final grade = _gradeForAccuracy(accuracy);
     try {
+      // Player identity, so this score counts on the leaderboard.
+      final identityFields = await ScoreIdentity.fields();
+
       await FirebaseFirestore.instance.collection('scores').add({
+        ...identityFields,
         'level': 8,
         'levelName': 'Path Finder',
         'difficulty': widget.difficulty.label,
@@ -899,7 +1065,7 @@ class _PathFinderState extends State<PathFinder> {
         ? 'Study the revealed maze.'
         : isPreview
             ? 'Memorize the route before the maze hides.'
-            : 'Drag from START (S) through the corridors to FINISH (F).';
+            : 'Drag from your avatar through the corridors to FINISH (F).';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -960,29 +1126,63 @@ class _PathFinderState extends State<PathFinder> {
                 onPanEnd: _handlePanEnd,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: CustomPaint(
-                    painter: _MazePainter(
-                      maze: maze,
-                      size: mazeSize,
-                      start: start,
-                      goal: goal,
-                      tracedPath: tracedPath,
-                      revealMaze: isPreview || isMistakeReveal,
-                      showTryAgain: showTryAgain,
-                      wallColor: wallColor,
-                      corridorColor: corridorColor,
-                      hiddenColor: Colors.white.withValues(alpha: 0.14),
-                      pathColor: Colors.cyanAccent,
-                      mistakePathColor: Colors.redAccent,
-                      startColor: startColor,
-                      finishColor: finishColor,
-                    ),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _MazePainter(
+                            maze: maze,
+                            size: mazeSize,
+                            start: start,
+                            goal: goal,
+                            tracedPath: tracedPath,
+                            revealMaze: isPreview || isMistakeReveal,
+                            showTryAgain: showTryAgain,
+                            wallColor: wallColor,
+                            corridorColor: corridorColor,
+                            hiddenColor: Colors.white.withValues(alpha: 0.14),
+                            pathColor: Colors.cyanAccent,
+                            mistakePathColor: Colors.redAccent,
+                            startColor: startColor,
+                            finishColor: finishColor,
+                          ),
+                        ),
+                      ),
+                      _buildStartAvatar(boardSize),
+                    ],
                   ),
                 ),
               ),
             ),
           );
         }),
+      ),
+    );
+  }
+
+  /// The player's avatar, placed on the start cell of the maze.
+  Widget _buildStartAvatar(double boardSize) {
+    if (mazeSize <= 0) return const SizedBox.shrink();
+
+    final double cellSize = boardSize / mazeSize;
+    final double diameter = cellSize * 0.74;
+
+    return Positioned(
+      left: (start.x + 0.5) * cellSize - diameter / 2,
+      top: (start.y + 0.5) * cellSize - diameter / 2,
+      width: diameter,
+      height: diameter,
+      // Touches pass through, so tracing from the start still works.
+      child: IgnorePointer(
+        child: Container(
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.white,
+          ),
+          child: ClipOval(
+            child: PlayerAvatar(index: playerAvatar, size: diameter),
+          ),
+        ),
       ),
     );
   }
@@ -1104,16 +1304,6 @@ class _PathFinderState extends State<PathFinder> {
               _buildCustomAppBar(),
               Expanded(child: isGameOver ? _buildResultScreen() : _buildGameplay()),
             ]),
-            if (isPaused && !showOptions)
-              Positioned.fill(
-                child: PauseMenu(
-                  onResume: resumeGame,
-                  onRestart: restartGame,
-                  onOptions: _showGameOptions,
-                  onMainMenu: goToMainMenu,
-                ),
-              ),
-            if (showOptions) _buildOptionsScreen(),
             Align(
               alignment: Alignment.topCenter,
               child: ConfettiWidget(
@@ -1126,7 +1316,99 @@ class _PathFinderState extends State<PathFinder> {
                 ],
               ),
             ),
+            // Pause menu + options screen (same structure as the Math game)
+            if (isPaused)
+              Positioned.fill(
+                child: showOptions
+                    ? _buildOptionsScreen()
+                    : PauseMenu(
+                        onResume: resumeGame,
+                        onRestart: restartGame,
+                        onOptions: _showGameOptions,
+                        onMainMenu: goToMainMenu,
+                      ),
+              ),
           ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 3D BUTTON WIDGET (same as the Math game)
+// ============================================================
+
+class _3DButton extends StatefulWidget {
+  final String text;
+  final IconData? icon;
+  final Color color;
+  final Color shadowColor;
+  final Color textColor;
+  final VoidCallback onPressed;
+
+  const _3DButton({
+    required this.text,
+    this.icon,
+    required this.color,
+    required this.shadowColor,
+    required this.textColor,
+    required this.onPressed,
+  });
+
+  @override
+  State<_3DButton> createState() => _3DButtonState();
+}
+
+class _3DButtonState extends State<_3DButton> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) {
+        setState(() => _isPressed = false);
+        widget.onPressed();
+      },
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: widget.color,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: widget.shadowColor,
+              offset: Offset(0, _isPressed ? 0 : 5),
+              blurRadius: 0,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.icon != null) ...[
+              Icon(widget.icon, color: widget.textColor, size: 22),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                widget.text,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: widget.textColor,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1225,7 +1507,22 @@ class _MazePainter extends CustomPainter {
       canvas.drawPath(path, pathPaint);
     }
 
-    _drawMarker(canvas, start, cellSize, startColor, 'S');
+    // Start: a green ring. The player's avatar is placed on top of it.
+    final startCenter = Offset(
+      (start.x + 0.5) * cellSize,
+      (start.y + 0.5) * cellSize,
+    );
+    canvas.drawCircle(
+      startCenter,
+      cellSize * 0.46,
+      Paint()..color = Colors.white,
+    );
+    canvas.drawCircle(
+      startCenter,
+      cellSize * 0.42,
+      Paint()..color = startColor,
+    );
+
     _drawMarker(canvas, goal, cellSize, finishColor, 'F');
 
     if (showTryAgain) {
