@@ -34,6 +34,7 @@ flutter:
   assets:
     - assets/sounds/
     - assets/images/science/
+    - assets/images/science_game/
     - assets/images/mindboostlogo.jpg
     - assets/images/level7/garden_mystery.png
     - assets/images/level7/library_book.png

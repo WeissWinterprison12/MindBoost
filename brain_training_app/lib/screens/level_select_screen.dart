@@ -9,6 +9,7 @@ import '../models/game_difficulty.dart';
 
 import '../game/math_game.dart';
 import '../game/science_puzzle.dart';
+import '../game/science_game.dart';
 import '../game/memory_match.dart';
 import '../game/pattern_sequence.dart';
 import '../game/tile_matrix.dart';
@@ -387,6 +388,20 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       starsEarned: 3,
                       unlocked: true,
                       page: const PathFinder(),
+                    ),
+                    GameLevelCard(
+                      levelNum: '9',
+                      title: 'Science Game',
+                      subtitle: 'Drag & Drop Science Challenge',
+                      icon: '🔬',
+                      gradientColors: const [
+                        Color(0xFF4A0E4E),
+                        Color(0xFF811252),
+                      ],
+                      borderColor: const Color(0xFFFFD700),
+                      starsEarned: 3,
+                      unlocked: true,
+                      page: const ScienceGame(),
                     ),
                   ],
                 ),
@@ -860,23 +875,27 @@ class _GameLevelCardState extends State<GameLevelCard> {
 
     // Pass the selected difficulty to games that support it.
     final Widget selectedGame = widget.levelNum == '1'
-    ? MathGame(difficulty: selectedDifficulty)
-    : widget.levelNum == '2'
-        ? SciencePuzzle(difficulty: selectedDifficulty)
-        : widget.levelNum == '3'
-            ? MemoryMatch(difficulty: selectedDifficulty)
-            : widget.levelNum == '4'
-                ? PatternSequence(difficulty: selectedDifficulty)
-                : widget.levelNum == '5'
-                    ? MemoryMatrix(difficulty: selectedDifficulty)
-                    : widget.levelNum == '6'
-                        ? LogicDetective(difficulty: selectedDifficulty)
-                        : widget.levelNum == '7'
-                            ? WordQuestGame(difficulty: selectedDifficulty)
-                            : widget.levelNum == '8'
-                                ? PathFinder(difficulty: selectedDifficulty)
-                                : widget.page;
-                        
+        ? MathGame(difficulty: selectedDifficulty)
+        : widget.levelNum == '2'
+            ? SciencePuzzle(difficulty: selectedDifficulty)
+            : widget.levelNum == '3'
+                ? MemoryMatch(difficulty: selectedDifficulty)
+                : widget.levelNum == '4'
+                    ? PatternSequence(difficulty: selectedDifficulty)
+                    : widget.levelNum == '5'
+                        ? MemoryMatrix(difficulty: selectedDifficulty)
+                        : widget.levelNum == '6'
+                            ? LogicDetective(difficulty: selectedDifficulty)
+                            : widget.levelNum == '7'
+                                ? WordQuestGame(difficulty: selectedDifficulty)
+                                : widget.levelNum == '8'
+                                    ? PathFinder(difficulty: selectedDifficulty)
+                                    : widget.levelNum == '9'
+                                        ? ScienceGame(
+                                            difficulty: selectedDifficulty,
+                                          )
+                                        : widget.page;
+
     Navigator.push(
       context,
       MaterialPageRoute(
