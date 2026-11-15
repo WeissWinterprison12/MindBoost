@@ -665,22 +665,38 @@ class _MemoryMatchState extends State<MemoryMatch>
           children: [
             const SizedBox(width: 48),
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: Colors.black.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white24),
-              ),
-              child: const Text(
-                'Memory Match',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                border: Border.all(
+                  color: const Color(0xFFFFD700),
+                  width: 1.5,
                 ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'LEVEL 3: MEMORY MATCH',
+                    style: TextStyle(
+                      color: Color(0xFFFFD700),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${widget.difficulty.label} MODE',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 10,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
               ),
             ),
             IconButton(

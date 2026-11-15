@@ -7,7 +7,7 @@ import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
 import '../models/game_difficulty.dart';
-import 'science_puzzle.dart';
+import 'path_finder.dart';
 import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../widgets/pause_menu.dart';
@@ -123,37 +123,37 @@ class _ScienceGameState extends State<ScienceGame>
           description: 'This is where the air we breathe goes.',
           answer: 'LUNGS',
           markerX: 0.50,
-          markerY: 0.37,
+          markerY: 0.51,
         ),
         ScienceQuestion(
           letter: 'B',
           description: 'This is where air enters the body.',
           answer: 'NOSE',
           markerX: 0.50,
-          markerY: 0.12,
+          markerY: 0.24,
         ),
         ScienceQuestion(
           letter: 'C',
           description:
               'This organ processes nutrients and helps remove harmful substances.',
           answer: 'LIVER',
-          markerX: 0.39,
-          markerY: 0.54,
+          markerX: 0.38,
+          markerY: 0.69,
         ),
         ScienceQuestion(
           letter: 'D',
           description: 'This organ pumps blood throughout the body.',
           answer: 'HEART',
-          markerX: 0.53,
-          markerY: 0.43,
+          markerX: 0.54,
+          markerY: 0.53,
         ),
         // NEW (5th question) - adjust the marker to match your image.
         ScienceQuestion(
           letter: 'E',
           description: 'This organ breaks down food after we swallow it.',
           answer: 'STOMACH',
-          markerX: 0.58,
-          markerY: 0.56,
+          markerX: 0.57,
+          markerY: 0.72,
         ),
       ],
     ),
@@ -165,43 +165,42 @@ class _ScienceGameState extends State<ScienceGame>
     ScienceChallenge(
       category: 'BIOLOGY',
       title: 'RESPIRATORY SYSTEM',
-      image: 'assets/images/science_game/biology_respiratory.png',
+      image: 'assets/images/science_game/biology_respiratory.png.png',
       questions: [
         ScienceQuestion(
           letter: 'A',
           description: 'This is the passage that carries air toward the lungs.',
           answer: 'TRACHEA',
-          markerX: 0.50,
-          markerY: 0.29,
+          markerX: 0.54,
+          markerY: 0.40,
         ),
         ScienceQuestion(
           letter: 'B',
           description: 'These organs take oxygen into the body.',
           answer: 'LUNGS',
-          markerX: 0.50,
-          markerY: 0.54,
+          markerX: 0.40,
+          markerY: 0.58,
         ),
         ScienceQuestion(
           letter: 'C',
           description: 'This is where air normally enters the respiratory system.',
           answer: 'NOSE',
-          markerX: 0.50,
-          markerY: 0.13,
+          markerX: 0.30,
+          markerY: 0.18,
         ),
         ScienceQuestion(
           letter: 'D',
           description: 'This muscle helps the lungs expand during breathing.',
           answer: 'DIAPHRAGM',
           markerX: 0.50,
-          markerY: 0.79,
+          markerY: 0.74,
         ),
-        // NEW (5th question) - adjust the marker to match your image.
         ScienceQuestion(
           letter: 'E',
           description: 'These tubes split from the trachea and lead into each lung.',
           answer: 'BRONCHI',
-          markerX: 0.42,
-          markerY: 0.40,
+          markerX: 0.55,
+          markerY: 0.51,
         ),
       ],
     ),
@@ -513,10 +512,19 @@ class _ScienceGameState extends State<ScienceGame>
         .map((entry) => entry.key)
         .firstOrNull;
 
+    // Dropped back onto the slot it already sits in: nothing to do.
+    if (previousLetter == letter) return;
+
     setState(() {
-      // Remove the answer from its previous slot if it was already used.
+      // The answer that currently sits in the target slot (if any).
+      final displacedAnswer = playerAnswers[letter];
+
+      // Move the dragged answer out of its previous slot. If the target
+      // slot was occupied, that answer is swapped into the previous slot.
+      // (If there was no previous slot, the displaced answer simply goes
+      // back to the Choice Sheet.)
       if (previousLetter != null) {
-        playerAnswers[previousLetter] = null;
+        playerAnswers[previousLetter] = displacedAnswer;
       }
 
       // Place it in the selected answer slot.
@@ -534,6 +542,26 @@ class _ScienceGameState extends State<ScienceGame>
     if (completed || gameEnded || isPaused) return;
 
     if (playerAnswers[letter] == null) return;
+
+    setState(() {
+      playerAnswers[letter] = null;
+      feedbackMessage = '';
+    });
+
+    audio.playSfx('click.mp3');
+  }
+
+  /// Called when an answer is dragged from the Answer Sheet back onto the
+  /// Choice Sheet.
+  void returnAnswerToChoices(String answer) {
+    if (completed || gameEnded || isPaused) return;
+
+    final letter = playerAnswers.entries
+        .where((entry) => entry.value == answer)
+        .map((entry) => entry.key)
+        .firstOrNull;
+
+    if (letter == null) return;
 
     setState(() {
       playerAnswers[letter] = null;
@@ -731,7 +759,7 @@ class _ScienceGameState extends State<ScienceGame>
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => SciencePuzzle(
+        builder: (context) => PathFinder(
           difficulty: widget.difficulty,
         ),
       ),
@@ -811,40 +839,61 @@ class _ScienceGameState extends State<ScienceGame>
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 8,
+          horizontal: 12,
+          vertical: 3,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const SizedBox(width: 48),
+            const SizedBox(width: 40),
 
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: Colors.black.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white24),
-              ),
-              child: const Text(
-                'Body Explorer',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                border: Border.all(
+                  color: const Color(0xFFFFD700),
+                  width: 1.5,
                 ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'LEVEL 9: SCIENCE GAME',
+                    style: TextStyle(
+                      color: Color(0xFFFFD700),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${widget.difficulty.label} MODE',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 10,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
               ),
             ),
 
             IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(
+                minWidth: 40,
+                minHeight: 40,
+              ),
               onPressed: pauseGame,
               icon: const Icon(
                 Icons.pause_circle_filled,
                 color: Colors.amber,
-                size: 32,
+                size: 29,
               ),
             ),
           ],
@@ -863,58 +912,64 @@ class _ScienceGameState extends State<ScienceGame>
     required String value,
     required Color valueColor,
   }) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: 8,
-          sigmaY: 8,
-        ),
-        child: Container(
-          width: 96,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 10,
-            vertical: 10,
+    return Expanded(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(13),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: 6,
+            sigmaY: 6,
           ),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.18),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 5,
+              vertical: 7,
             ),
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    icon,
-                    color: Colors.white70,
-                    size: 14,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      color: Colors.white70,
+                      size: 12,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                value,
-                style: TextStyle(
-                  color: valueColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
+                    const SizedBox(width: 3),
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: valueColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -926,39 +981,57 @@ class _ScienceGameState extends State<ScienceGame>
   // ============================================================
 
   Widget _buildChoiceSheet() {
+    return DragTarget<String>(
+      // Only answers that are currently placed on the Answer Sheet
+      // can be dropped back here.
+      onWillAcceptWithDetails: (details) =>
+          !completed &&
+          !gameEnded &&
+          !isPaused &&
+          playerAnswers.values.contains(details.data),
+      onAcceptWithDetails: (details) =>
+          returnAnswerToChoices(details.data),
+      builder: (context, candidateData, rejectedData) =>
+          _buildChoiceSheetContent(candidateData.isNotEmpty),
+    );
+  }
+
+  Widget _buildChoiceSheetContent(bool highlight) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white24),
+        color: highlight
+            ? Colors.amber.withValues(alpha: 0.16)
+            : Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+          color: highlight ? Colors.amber : Colors.white24,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: const [
+          const Row(
+            children: [
               Icon(
                 Icons.drag_indicator,
                 color: Colors.amber,
-                size: 20,
+                size: 17,
               ),
-              SizedBox(width: 6),
+              SizedBox(width: 5),
               Text(
                 'CHOICE SHEET',
                 style: TextStyle(
                   color: Colors.amber,
                   fontWeight: FontWeight.w900,
-                  fontSize: 14,
-                  letterSpacing: 1,
+                  fontSize: 12,
+                  letterSpacing: 0.8,
                 ),
               ),
             ],
           ),
-
-          const SizedBox(height: 4),
-
+          const SizedBox(height: 3),
           const Text(
             'Drag each answer into the correct blank space.',
             style: TextStyle(
@@ -966,21 +1039,17 @@ class _ScienceGameState extends State<ScienceGame>
               fontSize: 11,
             ),
           ),
-
-          const SizedBox(height: 10),
-
+          const SizedBox(height: 7),
           Wrap(
             alignment: WrapAlignment.center,
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 6,
+            runSpacing: 6,
             children: shuffledChoices.map((answer) {
               final isUsed = playerAnswers.values.contains(answer);
 
               return Draggable<String>(
                 data: answer,
-
                 maxSimultaneousDrags: isUsed ? 0 : 1,
-
                 feedback: Material(
                   color: Colors.transparent,
                   child: _buildAnswerChip(
@@ -988,12 +1057,10 @@ class _ScienceGameState extends State<ScienceGame>
                     isDragging: true,
                   ),
                 ),
-
                 childWhenDragging: Opacity(
                   opacity: 0.25,
                   child: _buildAnswerChip(answer),
                 ),
-
                 child: _buildAnswerChip(
                   answer,
                   isUsed: isUsed,
@@ -1012,29 +1079,29 @@ class _ScienceGameState extends State<ScienceGame>
     bool isUsed = false,
   }) {
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration: const Duration(milliseconds: 150),
       constraints: const BoxConstraints(
-        minWidth: 65,
+        minWidth: 62,
       ),
       padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 11,
+        horizontal: 11,
+        vertical: 9,
       ),
       decoration: BoxDecoration(
         color: isUsed
             ? Colors.white24
             : const Color(0xFF9B8AD6),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isDragging ? Colors.amber : Colors.white30,
           width: isDragging ? 2 : 1,
         ),
         boxShadow: isDragging
             ? [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
+                const BoxShadow(
+                  color: Colors.black38,
+                  blurRadius: 8,
+                  offset: Offset(0, 4),
                 ),
               ]
             : [],
@@ -1046,7 +1113,7 @@ class _ScienceGameState extends State<ScienceGame>
           color: Colors.white,
           fontWeight: FontWeight.w900,
           fontSize: answer.length > 12 ? 10 : 12,
-          letterSpacing: 0.4,
+          letterSpacing: 0.2,
         ),
       ),
     );
@@ -1056,98 +1123,123 @@ class _ScienceGameState extends State<ScienceGame>
   // ILLUSTRATION
   // ============================================================
 
-  Widget _buildIllustrationPanel() {
+  // Width / height of the current illustration.
+  double get _imageAspectRatio {
+    switch (selectedChallenge.image) {
+      case 'assets/images/science_game/biology_respiratory.png.png':
+        return 435 / 612;
+
+      case 'assets/images/science_game/geology_ocean_floor.png':
+        return 640 / 448;
+
+      case 'assets/images/science_game/biology_body.png':
+        // Provisional until the actual image is uploaded.
+        return 2 / 3;
+
+      case 'assets/images/science_game/geology_landforms.png':
+        // Provisional until the actual image is uploaded.
+        return 1.5;
+
+      default:
+        return 2 / 3;
+    }
+  }
+
+  // The panel is only as tall as the picture plus its labels.
+  Widget _buildIllustrationPanel(double width) {
+    // Panel padding (6 + 6) and border (1 + 1).
+    final double imageWidth = width - 14;
+    final double imageHeight = imageWidth / _imageAspectRatio;
+
     return Container(
-      padding: const EdgeInsets.all(8),
+      width: width,
+      padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white24),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
             'ILLUSTRATION',
             style: TextStyle(
               color: Colors.amber,
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.8,
             ),
           ),
+          const SizedBox(height: 6),
 
-          const SizedBox(height: 8),
-
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.asset(
-                        selectedChallenge.image,
-                        fit: BoxFit.fill,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.white,
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.all(12),
-                            child: const Text(
-                              'Illustration not found.\nCheck the image asset path.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.red,
-                                fontSize: 12,
-                              ),
+          SizedBox(
+            width: imageWidth,
+            height: imageHeight,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.asset(
+                      selectedChallenge.image,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Colors.white,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.all(12),
+                          child: const Text(
+                            'Illustration not found.\nCheck the image asset path.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.red,
+                              fontSize: 12,
                             ),
-                          );
-                        },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+
+                // A-E markers positioned relative to the image.
+                ...activeQuestions.map((question) {
+                  const markerSize = 26.0;
+
+                  return Positioned(
+                    left: imageWidth * question.markerX - markerSize / 2,
+                    top: imageHeight * question.markerY - markerSize / 2,
+                    child: Container(
+                      width: markerSize,
+                      height: markerSize,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.amber,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 2,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        question.letter,
+                        style: const TextStyle(
+                          color: Color(0xFF4A0E4E),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-
-                    // LETTER MARKERS (only for the active questions)
-                    ...activeQuestions.map((question) {
-                      return Positioned(
-                        left: (constraints.maxWidth *
-                                question.markerX) -
-                            15,
-                        top: (constraints.maxHeight *
-                                question.markerY) -
-                            15,
-                        child: Container(
-                          width: 30,
-                          height: 30,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: Colors.amber,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white,
-                              width: 2,
-                            ),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black45,
-                                blurRadius: 6,
-                              ),
-                            ],
-                          ),
-                          child: Text(
-                            question.letter,
-                            style: const TextStyle(
-                              color: Color(0xFF4A0E4E),
-                              fontWeight: FontWeight.w900,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                );
-              },
+                  );
+                }),
+              ],
             ),
           ),
 
@@ -1169,21 +1261,24 @@ class _ScienceGameState extends State<ScienceGame>
   // ANSWER SHEET
   // ============================================================
 
-  Widget _buildAnswerSheet() {
+  // The sheet is only as tall as its answer boxes, feedback and button.
+  Widget _buildAnswerSheet(double width) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      width: width,
+      padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white24),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
             'ANSWER SHEET',
             style: TextStyle(
               color: Colors.amber,
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.8,
             ),
@@ -1191,20 +1286,10 @@ class _ScienceGameState extends State<ScienceGame>
 
           const SizedBox(height: 6),
 
-          Expanded(
-            child: ListView.separated(
-              padding: EdgeInsets.zero,
-              physics: const BouncingScrollPhysics(),
-              itemCount: activeQuestions.length,
-              separatorBuilder: (context, index) =>
-                  const SizedBox(height: 7),
-              itemBuilder: (context, index) {
-                final question = activeQuestions[index];
-
-                return _buildQuestionDropZone(question);
-              },
-            ),
-          ),
+          for (int i = 0; i < activeQuestions.length; i++) ...[
+            if (i > 0) const SizedBox(height: 5),
+            _buildQuestionDropZone(activeQuestions[i]),
+          ],
 
           const SizedBox(height: 6),
 
@@ -1214,6 +1299,32 @@ class _ScienceGameState extends State<ScienceGame>
               color: Colors.white70,
               fontSize: 10,
               fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          if (feedbackMessage.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              feedbackMessage,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.amber,
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 8),
+
+          // SUBMIT BUTTON (inside the answer sheet)
+          SizedBox(
+            width: double.infinity,
+            child: _buildChunkyButton(
+              label: 'SUBMIT ANSWERS',
+              icon: Icons.check_circle_rounded,
+              color: const Color(0xFF2EC4B6),
+              onPressed: submitAnswers,
             ),
           ),
         ],
@@ -1241,7 +1352,7 @@ class _ScienceGameState extends State<ScienceGame>
 
         return AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
             color: isHovering
                 ? Colors.amber.withValues(alpha: 0.22)
@@ -1255,14 +1366,15 @@ class _ScienceGameState extends State<ScienceGame>
             ),
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 25,
-                    height: 25,
+                    width: 24,
+                    height: 24,
                     alignment: Alignment.center,
                     decoration: const BoxDecoration(
                       color: Colors.amber,
@@ -1294,20 +1406,18 @@ class _ScienceGameState extends State<ScienceGame>
                 ],
               ),
 
-              const SizedBox(height: 7),
+              const SizedBox(height: 5),
 
-              GestureDetector(
-                onTap: currentAnswer == null
-                    ? null
-                    : () => removeAnswer(question.letter),
-                child: Container(
+              Builder(
+                builder: (context) {
+                  final Widget answerBox = Container(
                   width: double.infinity,
                   constraints: const BoxConstraints(
-                    minHeight: 34,
+                    minHeight: 32,
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6,
-                    vertical: 7,
+                    vertical: 5,
                   ),
                   decoration: BoxDecoration(
                     color: currentAnswer == null
@@ -1334,8 +1444,8 @@ class _ScienceGameState extends State<ScienceGame>
                             fontWeight: FontWeight.w900,
                             fontSize: currentAnswer != null &&
                                     currentAnswer.length > 12
-                                ? 9
-                                : 10,
+                                ? 10
+                                : 11,
                           ),
                         ),
                       ),
@@ -1350,7 +1460,33 @@ class _ScienceGameState extends State<ScienceGame>
                       ],
                     ],
                   ),
-                ),
+                );
+
+                  return GestureDetector(
+                    onTap: currentAnswer == null
+                        ? null
+                        : () => removeAnswer(question.letter),
+                    child: currentAnswer == null
+                        ? answerBox
+                        // A placed answer can be dragged to another slot
+                        // (they swap) or back onto the Choice Sheet.
+                        : Draggable<String>(
+                            data: currentAnswer,
+                            feedback: Material(
+                              color: Colors.transparent,
+                              child: _buildAnswerChip(
+                                currentAnswer,
+                                isDragging: true,
+                              ),
+                            ),
+                            childWhenDragging: Opacity(
+                              opacity: 0.3,
+                              child: answerBox,
+                            ),
+                            child: answerBox,
+                          ),
+                  );
+                },
               ),
             ],
           ),
@@ -1365,12 +1501,11 @@ class _ScienceGameState extends State<ScienceGame>
 
   Widget _buildGameplay() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 9),
       child: Column(
         children: [
-          // HUD
+          // COMPACT HUD
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _buildHudCard(
                 icon: Icons.timer_outlined,
@@ -1378,14 +1513,12 @@ class _ScienceGameState extends State<ScienceGame>
                 value: hasGameTimer ? '${gameSeconds}s' : '∞',
                 valueColor: Colors.cyanAccent,
               ),
-
               _buildHudCard(
                 icon: Icons.touch_app_rounded,
                 title: 'MOVES',
                 value: '$moves',
                 valueColor: Colors.purpleAccent,
               ),
-
               _buildHudCard(
                 icon: Icons.local_fire_department,
                 title: 'STREAK',
@@ -1395,75 +1528,69 @@ class _ScienceGameState extends State<ScienceGame>
             ],
           ),
 
-          const SizedBox(height: 10),
+          const SizedBox(height: 7),
 
-          // CATEGORY AND CHALLENGE
+          // CHALLENGE TITLE
           Text(
             '${selectedChallenge.category} • ${selectedChallenge.title}',
             textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Colors.cyanAccent,
-              fontSize: 17,
+              fontSize: 14,
               fontWeight: FontWeight.w900,
-              letterSpacing: 1,
+              letterSpacing: 0.6,
             ),
           ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
 
-          // CHOICE SHEET ON TOP
-          _buildChoiceSheet(),
-
-          const SizedBox(height: 10),
-
-          // ILLUSTRATION LEFT + ANSWER SHEET RIGHT
+          // CHOICE SHEET + ILLUSTRATION + ANSWER SHEET, centered as one
+          // group. Every box is only as big as what is inside it. If the
+          // group is taller than the screen, it scrolls.
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 5,
-                  child: _buildIllustrationPanel(),
-                ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                const double gap = 8;
 
-                const SizedBox(width: 9),
+                final double usableWidth = constraints.maxWidth;
+                final double illustrationWidth =
+                    (usableWidth - gap) * 0.42;
+                final double answerSheetWidth =
+                    usableWidth - gap - illustrationWidth;
 
-                Expanded(
-                  flex: 6,
-                  child: _buildAnswerSheet(),
-                ),
-              ],
-            ),
-          ),
+                return SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildChoiceSheet(),
 
-          const SizedBox(height: 8),
+                          const SizedBox(height: gap),
 
-          // FEEDBACK
-          if (feedbackMessage.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Text(
-                feedbackMessage,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.amber,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 11,
-                ),
-              ),
-            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              _buildIllustrationPanel(illustrationWidth),
+                              const SizedBox(width: gap),
+                              _buildAnswerSheet(answerSheetWidth),
+                            ],
+                          ),
 
-          // SUBMIT BUTTON
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: _buildChunkyButton(
-                label: 'SUBMIT ANSWERS',
-                icon: Icons.check_circle_rounded,
-                color: const Color(0xFF2EC4B6),
-                onPressed: submitAnswers,
-              ),
+                          const SizedBox(height: 6),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -1687,30 +1814,44 @@ class _ScienceGameState extends State<ScienceGame>
         ),
         child: Stack(
           children: [
-            Column(
-              children: [
-                _buildCustomAppBar(),
+            // Everything is centered and kept to a comfortable width,
+            // so the game stays in the middle on wide screens too.
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  children: [
+                    _buildCustomAppBar(),
 
-                Expanded(
-                  child: AnimatedBuilder(
-                    animation: _shakeAnimation,
-                    builder: (context, child) {
-                      final t = _shakeAnimation.value;
+                    Expanded(
+                      child: AnimatedBuilder(
+                        animation: _shakeAnimation,
+                        builder: (context, child) {
+                          // Not shaking: no offset at all, so the game
+                          // can never stay tilted to one side.
+                          if (!_shakeController.isAnimating) {
+                            return child!;
+                          }
 
-                      final dx =
-                          sin(t * pi * 6) * 10 * (1 - t);
+                          final t = _shakeAnimation.value;
 
-                      return Transform.translate(
-                        offset: Offset(dx, 0),
-                        child: child,
-                      );
-                    },
-                    child: completed
-                        ? buildResultScreen()
-                        : _buildGameplay(),
-                  ),
+                          // Small wobble (smaller than the 9px side
+                          // padding) that settles back to exactly 0.
+                          final dx = sin(t * pi * 6) * 6 * (1 - t);
+
+                          return Transform.translate(
+                            offset: Offset(dx, 0),
+                            child: child,
+                          );
+                        },
+                        child: completed
+                            ? buildResultScreen()
+                            : _buildGameplay(),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
 
             // PAUSE AND OPTIONS

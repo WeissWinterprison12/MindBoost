@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
 import '../services/score_identity.dart';
+import '../widgets/options_menu.dart';
 import '../widgets/pause_menu.dart';
 
 class WordPuzzle {
@@ -198,6 +199,8 @@ class _WordQuestGameState extends State<WordQuestGame>
   // Audio settings shared with the other games.
   double musicVolume = AudioSettings.defaultVolume;
   double soundVolume = AudioSettings.defaultVolume;
+  double _lastMusicVolume = AudioSettings.defaultVolume;
+  double _lastSoundVolume = AudioSettings.defaultVolume;
   bool _musicStoppedForMute = false;
 
   String _feedback = '';
@@ -275,6 +278,8 @@ class _WordQuestGameState extends State<WordQuestGame>
       setState(() {
         musicVolume = settings.musicVolume;
         soundVolume = settings.soundVolume;
+        if (musicVolume > 0) _lastMusicVolume = musicVolume;
+        if (soundVolume > 0) _lastSoundVolume = soundVolume;
       });
 
       // Must run before any sound plays, so sound effects never take
@@ -370,7 +375,10 @@ class _WordQuestGameState extends State<WordQuestGame>
     final volume = value.clamp(0.0, 1.0).toDouble();
     if (!mounted) return;
 
-    setState(() => musicVolume = volume);
+    setState(() {
+      musicVolume = volume;
+      if (volume > 0) _lastMusicVolume = volume;
+    });
     await AudioSettings.instance.setMusicVolume(volume);
 
     try {
@@ -393,7 +401,10 @@ class _WordQuestGameState extends State<WordQuestGame>
     final volume = value.clamp(0.0, 1.0).toDouble();
     if (!mounted) return;
 
-    setState(() => soundVolume = volume);
+    setState(() {
+      soundVolume = volume;
+      if (volume > 0) _lastSoundVolume = volume;
+    });
     await AudioSettings.instance.setSoundVolume(volume);
 
     try {
@@ -931,19 +942,38 @@ class _WordQuestGameState extends State<WordQuestGame>
           children: [
             const SizedBox(width: 48),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: Colors.black.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white24),
-              ),
-              child: const Text(
-                'Word Quest',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                border: Border.all(
+                  color: const Color(0xFFFFD700),
+                  width: 1.5,
                 ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'LEVEL 7: WORD QUEST',
+                    style: TextStyle(
+                      color: Color(0xFFFFD700),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${widget.difficulty.label} MODE',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 10,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
               ),
             ),
             IconButton(
@@ -1763,138 +1793,42 @@ class _WordQuestGameState extends State<WordQuestGame>
 
 
   // ============================================================
-  // OPTIONS SCREEN (matches Math Game)
-  // ============================================================
+  Future<void> _toggleMusicMute() =>
+      changeMusicVolume(musicVolume <= 0 ? _lastMusicVolume : 0.0);
+
+  Future<void> _toggleSoundMute() =>
+      changeSoundVolume(soundVolume <= 0 ? _lastSoundVolume : 0.0);
+
+  Future<void> _toggleMuteAll() async {
+    if (musicVolume <= 0 && soundVolume <= 0) {
+      await Future.wait([
+        changeMusicVolume(_lastMusicVolume),
+        changeSoundVolume(_lastSoundVolume),
+      ]);
+    } else {
+      if (musicVolume > 0) _lastMusicVolume = musicVolume;
+      if (soundVolume > 0) _lastSoundVolume = soundVolume;
+      await Future.wait([
+        changeMusicVolume(0.0),
+        changeSoundVolume(0.0),
+      ]);
+    }
+  }
 
   Widget _buildOptionsScreen() {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF4A0E4E), Color(0xFF811252), Color(0xFF2E0854)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(22),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 440),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B0B46).withOpacity(0.96),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: const Color(0xFFFFD700), width: 3),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black45, blurRadius: 18, offset: Offset(0, 8)),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '⚙️ OPTIONS',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Color(0xFFFFD700), fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 1.4),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Adjust your game audio',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 15, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 28),
-                      _buildOptionsVolumeSlider(title: '🎵 Background Music', value: musicVolume, onChanged: changeMusicVolume),
-                      const SizedBox(height: 22),
-                      _buildOptionsVolumeSlider(title: '🔊 Sound Effects', value: soundVolume, onChanged: changeSoundVolume),
-                      const SizedBox(height: 30),
-                      _buildOptionsButton(
-                        text: '← Back',
-                        onPressed: () => setState(() => _showOptions = false),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    return OptionsMenu(
+      musicVolume: musicVolume,
+      onMusicVolumeChanged: changeMusicVolume,
+      onMusicMuteToggle: _toggleMusicMute,
+      soundVolume: soundVolume,
+      onSoundVolumeChanged: changeSoundVolume,
+      onSoundMuteToggle: _toggleSoundMute,
+      onMuteAll: _toggleMuteAll,
+      allMuted: musicVolume <= 0 && soundVolume <= 0,
+      onBack: () => setState(() => _showOptions = false),
     );
   }
 
-  Widget _buildOptionsVolumeSlider({
-    required String title,
-    required double value,
-    required ValueChanged<double> onChanged,
-  }) {
-    final int percentage = (value * 100).round();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.65), width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
-              ),
-              Text('$percentage%', style: const TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.w900, fontSize: 17)),
-            ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: const Color(0xFFFFD700),
-              inactiveTrackColor: Colors.white24,
-              thumbColor: Colors.white,
-              overlayColor: const Color(0xFFFFD700).withOpacity(0.18),
-              trackHeight: 6,
-            ),
-            child: Slider(
-              value: value.clamp(0.0, 1.0).toDouble(),
-              min: 0.0,
-              max: 1.0,
-              divisions: 100,
-              label: '$percentage%',
-              onChanged: onChanged,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOptionsButton({required String text, required VoidCallback onPressed}) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 22),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFD700),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [BoxShadow(color: Color(0xFFB8860B), offset: Offset(0, 5), blurRadius: 0)],
-        ),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Color(0xFF3B0B46), fontWeight: FontWeight.w900, fontSize: 17),
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
   // BUILD
   // ============================================================
 

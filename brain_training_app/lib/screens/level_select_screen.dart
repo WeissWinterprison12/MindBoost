@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,13 +17,13 @@ import '../game/tile_matrix.dart';
 import '../game/case_detective.dart';
 import '../game/path_finder.dart';
 import '../game/word_quest.dart';
+
 import '../services/menu_music.dart';
 import '../widgets/game_loading_screen.dart';
 import '../widgets/menu_options.dart';
 
 /// When true, the next screen pushed on top of the level select screen
 /// (the profile editor) will NOT pause the menu music.
-/// It is switched on right before opening the profile editor.
 bool _keepMenuMusicOnNextPush = false;
 
 class LevelSelectScreen extends StatefulWidget {
@@ -34,8 +35,6 @@ class LevelSelectScreen extends StatefulWidget {
 
 class _LevelSelectScreenState extends State<LevelSelectScreen>
     with RouteAware {
-  /// True only when this screen paused the music itself, so the music is
-  /// restarted only when it was actually paused.
   bool _musicPausedByPush = false;
 
   @override
@@ -81,7 +80,9 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
     final route = ModalRoute.of(context);
+
     if (route is PageRoute) {
       menuRouteObserver.subscribe(this, route);
     }
@@ -89,21 +90,18 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
 
   @override
   void didPushNext() {
-    // The profile editor keeps the menu music playing.
     if (_keepMenuMusicOnNextPush) {
       _keepMenuMusicOnNextPush = false;
       _musicPausedByPush = false;
       return;
     }
 
-    // Games and other screens pause the menu music as before.
     MenuMusic.instance.pause();
     _musicPausedByPush = true;
   }
 
   @override
   void didPopNext() {
-    // Only restart the music if this screen paused it.
     if (_musicPausedByPush) {
       _musicPausedByPush = false;
       MenuMusic.instance.restart();
@@ -178,6 +176,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                   ],
                 ),
               ),
+
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
                 child: Row(
@@ -258,8 +257,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // Settings button (it takes the place of the old
-                    // 18/18 stars badge).
                     _build3DButton(
                       onTap: () => showMenuOptions(context),
                       child: const Icon(
@@ -271,7 +268,9 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                   ],
                 ),
               ),
+
               const SizedBox(height: 15),
+
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 25),
@@ -291,6 +290,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const MathGame(),
                     ),
+
                     GameLevelCard(
                       levelNum: '2',
                       title: 'Science Puzzle',
@@ -305,6 +305,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const SciencePuzzle(),
                     ),
+
                     GameLevelCard(
                       levelNum: '3',
                       title: 'Memory Match',
@@ -319,6 +320,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const MemoryMatch(),
                     ),
+
                     GameLevelCard(
                       levelNum: '4',
                       title: 'Pattern Logic',
@@ -333,6 +335,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const PatternSequence(),
                     ),
+
                     GameLevelCard(
                       levelNum: '5',
                       title: 'Tile Matrix',
@@ -347,6 +350,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const MemoryMatrix(),
                     ),
+
                     GameLevelCard(
                       levelNum: '6',
                       title: 'Case Detective',
@@ -361,6 +365,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const LogicDetective(),
                     ),
+
                     GameLevelCard(
                       levelNum: '7',
                       title: 'Word Quest',
@@ -375,6 +380,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const WordQuestGame(),
                     ),
+
                     GameLevelCard(
                       levelNum: '8',
                       title: 'Path Finder',
@@ -389,6 +395,8 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
                       unlocked: true,
                       page: const PathFinder(),
                     ),
+
+                    // LEVEL 9 - NEW SCIENCE GAME
                     GameLevelCard(
                       levelNum: '9',
                       title: 'Science Game',
@@ -443,21 +451,28 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
   }
 }
 
+// ------------------------------------------------------------
+// PLAYER PROFILE BUTTON
+// ------------------------------------------------------------
+
 class PlayerProfileButton extends StatelessWidget {
   PlayerProfileButton({super.key});
 
   String _getUsername(User user, Map<String, dynamic>? data) {
     final savedUsername = data?['username'];
+
     if (savedUsername is String && savedUsername.trim().isNotEmpty) {
       return savedUsername.trim();
     }
 
     final displayName = user.displayName;
+
     if (displayName != null && displayName.trim().isNotEmpty) {
       return displayName.trim();
     }
 
     final email = user.email;
+
     if (email != null && email.contains('@')) {
       return email.split('@').first;
     }
@@ -476,6 +491,7 @@ class PlayerProfileButton extends StatelessWidget {
           final prefs = snapshot.data;
           final savedName = prefs?.getString('player_username');
           final savedAvatar = prefs?.getInt('player_avatar') ?? 0;
+
           return _buildProfile(
             context,
             username: savedName != null && savedName.trim().isNotEmpty
@@ -498,6 +514,7 @@ class PlayerProfileButton extends StatelessWidget {
         final username = _getUsername(user, data);
         final avatarRaw = data?['avatar'];
         final avatar = avatarRaw is int ? avatarRaw : 0;
+
         return _buildProfile(
           context,
           username: username,
@@ -681,8 +698,6 @@ class PlayerProfileButton extends StatelessWidget {
                     onPressed: () {
                       Navigator.pop(sheetContext);
 
-                      // Keep the menu music playing while the profile
-                      // is being edited.
                       _keepMenuMusicOnNextPush = true;
 
                       Navigator.of(context)
@@ -692,7 +707,6 @@ class PlayerProfileButton extends StatelessWidget {
                             ),
                           )
                           .whenComplete(() {
-                        // Safety reset in case the flag was never used.
                         _keepMenuMusicOnNextPush = false;
                       });
                     },
@@ -711,6 +725,10 @@ class PlayerProfileButton extends StatelessWidget {
     );
   }
 }
+
+// ------------------------------------------------------------
+// GAME LEVEL CARD
+// ------------------------------------------------------------
 
 class GameLevelCard extends StatefulWidget {
   final String levelNum;
@@ -755,11 +773,16 @@ class _GameLevelCardState extends State<GameLevelCard> {
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF806BC4), Color(0xFF51418F)],
+              colors: [
+                Color(0xFF806BC4),
+                Color(0xFF51418F),
+              ],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
           ),
           child: SafeArea(
             child: Column(
@@ -827,6 +850,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ),
                 ),
                 const SizedBox(height: 22),
+
                 _buildDifficultyButton(
                   context: sheetContext,
                   difficulty: GameDifficulty.easy,
@@ -836,6 +860,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   color: const Color(0xFF43C77A),
                 ),
                 const SizedBox(height: 12),
+
                 _buildDifficultyButton(
                   context: sheetContext,
                   difficulty: GameDifficulty.medium,
@@ -845,6 +870,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   color: const Color(0xFFFFA726),
                 ),
                 const SizedBox(height: 12),
+
                 _buildDifficultyButton(
                   context: sheetContext,
                   difficulty: GameDifficulty.hard,
@@ -853,6 +879,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   icon: Icons.local_fire_department_rounded,
                   color: const Color(0xFFEF5350),
                 ),
+
                 const SizedBox(height: 14),
                 TextButton(
                   onPressed: () => Navigator.pop(sheetContext),
@@ -873,7 +900,7 @@ class _GameLevelCardState extends State<GameLevelCard> {
 
     if (!mounted || selectedDifficulty == null) return;
 
-    // Pass the selected difficulty to games that support it.
+    // Pass the selected difficulty to the correct game.
     final Widget selectedGame = widget.levelNum == '1'
         ? MathGame(difficulty: selectedDifficulty)
         : widget.levelNum == '2'
@@ -885,11 +912,17 @@ class _GameLevelCardState extends State<GameLevelCard> {
                     : widget.levelNum == '5'
                         ? MemoryMatrix(difficulty: selectedDifficulty)
                         : widget.levelNum == '6'
-                            ? LogicDetective(difficulty: selectedDifficulty)
+                            ? LogicDetective(
+                                difficulty: selectedDifficulty,
+                              )
                             : widget.levelNum == '7'
-                                ? WordQuestGame(difficulty: selectedDifficulty)
+                                ? WordQuestGame(
+                                    difficulty: selectedDifficulty,
+                                  )
                                 : widget.levelNum == '8'
-                                    ? PathFinder(difficulty: selectedDifficulty)
+                                    ? PathFinder(
+                                        difficulty: selectedDifficulty,
+                                      )
                                     : widget.levelNum == '9'
                                         ? ScienceGame(
                                             difficulty: selectedDifficulty,
@@ -944,7 +977,11 @@ class _GameLevelCardState extends State<GameLevelCard> {
                     color: color,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(icon, color: Colors.white, size: 27),
+                  child: Icon(
+                    icon,
+                    color: Colors.white,
+                    size: 27,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -1000,7 +1037,11 @@ class _GameLevelCardState extends State<GameLevelCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         margin: const EdgeInsets.only(bottom: 18),
-        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
+        transform: Matrix4.translationValues(
+          0,
+          _isPressed ? 4 : 0,
+          0,
+        ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: widget.gradientColors,
@@ -1026,7 +1067,10 @@ class _GameLevelCardState extends State<GameLevelCard> {
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
           child: Row(
             children: [
               Container(

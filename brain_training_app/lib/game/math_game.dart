@@ -6,10 +6,12 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
 import '../services/score_identity.dart';
+import '../widgets/options_menu.dart';
 import '../widgets/pause_menu.dart';
 import 'science_puzzle.dart';
 
@@ -39,10 +41,11 @@ class _MathGameState extends State<MathGame> {
   bool _effectsReady = false;
   final AudioPlayer _musicPlayer = AudioPlayer();
 
-  int num1 = 0;
-  int num2 = 0;
-  int correctAnswer = 0;
-  String operator = '+';
+  int _answerNumerator = 0;
+  int _answerDenominator = 1;
+  String get correctAnswer => _answerDenominator == 1
+      ? '$_answerNumerator'
+      : '$_answerNumerator/$_answerDenominator';
   String question = '';
   int correctCount = 0;
   int wrongCount = 0;
@@ -50,7 +53,11 @@ class _MathGameState extends State<MathGame> {
   static const int maxQuestions = 10;
   int questionTime = 10;
 
-  int get timeLimit => widget.difficulty.timeLimit;
+  int get timeLimit => switch (widget.difficulty) {
+        GameDifficulty.easy => 0,
+        GameDifficulty.medium => 30,
+        GameDifficulty.hard => 45,
+      };
   bool get hasTimer => widget.difficulty != GameDifficulty.easy;
 
   bool gameOver = false;
@@ -58,6 +65,8 @@ class _MathGameState extends State<MathGame> {
   bool showOptions = false;
   double musicVolume = AudioSettings.defaultVolume;
   double soundVolume = AudioSettings.defaultVolume;
+  double _lastMusicVolume = AudioSettings.defaultVolume;
+  double _lastSoundVolume = AudioSettings.defaultVolume;
   bool _musicStoppedForMute = false;
   static const double _duckLevel = 0.3;
   int _duckToken = 0;
@@ -74,12 +83,16 @@ class _MathGameState extends State<MathGame> {
   bool showXpPopup = false;
   int xpGained = 0;
   int _gameSession = 0;
+  final List<String> _easyOperationDeck = [];
+  final List<String> _mediumOperationDeck = [];
+  final List<String> _hardQuestionDeck = [];
 
   @override
   void initState() {
     super.initState();
     confettiController = ConfettiController(duration: const Duration(seconds: 2));
     questionTime = timeLimit;
+    _prepareQuestionDecks();
     _initAudio();
     generateQuestion();
   }
@@ -93,6 +106,8 @@ class _MathGameState extends State<MathGame> {
     setState(() {
       musicVolume = settings.musicVolume;
       soundVolume = settings.soundVolume;
+      if (musicVolume > 0) _lastMusicVolume = musicVolume;
+      if (soundVolume > 0) _lastSoundVolume = soundVolume;
     });
     await _configureAudio();
     await Future.wait([_loadSoundEffects(), _startBackgroundMusic()]);
@@ -208,7 +223,10 @@ class _MathGameState extends State<MathGame> {
   Future<void> changeMusicVolume(double value) async {
     final volume = value.clamp(0.0, 1.0).toDouble();
     if (!mounted) return;
-    setState(() => musicVolume = volume);
+    setState(() {
+      musicVolume = volume;
+      if (volume > 0) _lastMusicVolume = volume;
+    });
     await AudioSettings.instance.setMusicVolume(volume);
     try {
       if (volume <= 0) {
@@ -235,7 +253,10 @@ class _MathGameState extends State<MathGame> {
   Future<void> changeSoundVolume(double value) async {
     final volume = value.clamp(0.0, 1.0).toDouble();
     if (!mounted) return;
-    setState(() => soundVolume = volume);
+    setState(() {
+      soundVolume = volume;
+      if (volume > 0) _lastSoundVolume = volume;
+    });
     await AudioSettings.instance.setSoundVolume(volume);
     try {
       for (final player in _effectPlayers) {
@@ -414,81 +435,259 @@ class _MathGameState extends State<MathGame> {
   }
 
   // GENERATE QUESTION
+  void _prepareQuestionDecks() {
+    _easyOperationDeck
+      ..clear()
+      ..addAll(['+', '−', '×', '÷', '+', '−', '×', '÷', '+', '−'])
+      ..shuffle(Random());
+    _mediumOperationDeck
+      ..clear()
+      ..addAll(['+', '−', '×', '÷', '+', '−', '×'])
+      ..shuffle(Random());
+    _hardQuestionDeck
+      ..clear()
+      ..addAll([
+        'fraction:+', 'fraction:−', 'fraction:×', 'fraction:÷',
+        'gcf', 'gcf', 'lcd', 'lcd', 'geometry', 'geometry',
+      ])
+      ..shuffle(Random());
+  }
+
+  int _gcd(int a, int b) {
+    a = a.abs();
+    b = b.abs();
+    while (b != 0) {
+      final remainder = a % b;
+      a = b;
+      b = remainder;
+    }
+    return a == 0 ? 1 : a;
+  }
+
+  int _lcm(int a, int b) => (a ~/ _gcd(a, b)) * b;
+
+  void _setQuestion(String prompt, int numerator, [int denominator = 1]) {
+    if (denominator < 0) {
+      numerator = -numerator;
+      denominator = -denominator;
+    }
+    final divisor = _gcd(numerator, denominator);
+    _answerNumerator = numerator ~/ divisor;
+    _answerDenominator = denominator ~/ divisor;
+    question = prompt;
+  }
+
+  (int, int) _randomFraction(Random random, {required bool hard}) {
+    final denominators = hard
+        ? const [3, 4, 5, 6, 8, 10, 12]
+        : const [2, 3, 4, 5, 6];
+    final denominator = denominators[random.nextInt(denominators.length)];
+    final numerator = random.nextInt(denominator - 1) + 1;
+    return (numerator, denominator);
+  }
+
+  void _generateIntegerMdas(Random random, {required String symbol}) {
+    late int a;
+    late int b;
+    late int answer;
+
+    switch (symbol) {
+      case '+':
+        a = random.nextInt(40) + 10;
+        b = random.nextInt(40) + 10;
+        answer = a + b;
+        break;
+      case '−':
+        a = random.nextInt(41) + 10;
+        b = random.nextInt(a - 9) + 1;
+        answer = a - b;
+        break;
+      case '×':
+        a = random.nextInt(11) + 2;
+        b = random.nextInt(9) + 2;
+        answer = a * b;
+        break;
+      default:
+        b = random.nextInt(10) + 2;
+        answer = random.nextInt(10) + 2;
+        a = b * answer;
+    }
+    _setQuestion('$a $symbol $b = ?', answer);
+  }
+
+  void _generateFractionMdas(
+    Random random, {
+    required bool hard,
+    required String symbol,
+  }) {
+    final first = _randomFraction(random, hard: hard);
+    final second = _randomFraction(random, hard: hard);
+    var a = first.$1;
+    var b = first.$2;
+    var c = second.$1;
+    var d = second.$2;
+    late int numerator;
+    late int denominator;
+
+    switch (symbol) {
+      case '+':
+        numerator = a * d + c * b;
+        denominator = b * d;
+        break;
+      case '−':
+        if (a * d < c * b) {
+          final oldA = a;
+          final oldB = b;
+          a = c;
+          b = d;
+          c = oldA;
+          d = oldB;
+        }
+        numerator = a * d - c * b;
+        denominator = b * d;
+        break;
+      case '×':
+        numerator = a * c;
+        denominator = b * d;
+        break;
+      default:
+        numerator = a * d;
+        denominator = b * c;
+    }
+
+    _setQuestion(
+      '($a/$b) $symbol ($c/$d) = ?',
+      numerator,
+      denominator,
+    );
+  }
+
+  void _generateGcfQuestion(Random random) {
+    final shared = random.nextInt(10) + 2;
+    final a = shared * (random.nextInt(7) + 2);
+    final b = shared * (random.nextInt(7) + 2);
+    _setQuestion('GCF of $a and $b = ?', _gcd(a, b));
+  }
+
+  void _generateLcdQuestion(Random random) {
+    const denominators = [3, 4, 5, 6, 8, 10, 12];
+    final first = denominators[random.nextInt(denominators.length)];
+    var second = denominators[random.nextInt(denominators.length)];
+    while (second == first) {
+      second = denominators[random.nextInt(denominators.length)];
+    }
+    final numeratorA = random.nextInt(first - 1) + 1;
+    final numeratorB = random.nextInt(second - 1) + 1;
+    _setQuestion(
+      'LCD of $numeratorA/$first and $numeratorB/$second = ?',
+      _lcm(first, second),
+    );
+  }
+
+  void _generateGeometryQuestion(Random random) {
+    switch (random.nextInt(4)) {
+      case 0:
+        final length = random.nextInt(8) + 5;
+        final width = random.nextInt(7) + 4;
+        _setQuestion(
+          'Area of a $length cm × $width cm rectangle = ? cm²',
+          length * width,
+        );
+        break;
+      case 1:
+        final length = random.nextInt(9) + 6;
+        final width = random.nextInt(7) + 4;
+        _setQuestion(
+          'Perimeter of a $length cm × $width cm rectangle = ? cm',
+          2 * (length + width),
+        );
+        break;
+      case 2:
+        final base = (random.nextInt(6) + 4) * 2;
+        final height = random.nextInt(8) + 3;
+        _setQuestion(
+          'Area of a triangle: base $base cm, height $height cm = ? cm²',
+          base * height ~/ 2,
+        );
+        break;
+      default:
+        final side = random.nextInt(9) + 4;
+        _setQuestion(
+          'Perimeter of a square with side $side cm = ? cm',
+          side * 4,
+        );
+    }
+  }
+
   void generateQuestion() {
     if (gameOver || isPaused) return;
     final random = Random();
 
     switch (widget.difficulty) {
       case GameDifficulty.easy:
-        num1 = random.nextInt(20) + 1;
-        num2 = random.nextInt(20) + 1;
-        if (random.nextBool()) {
-          operator = '+';
-          correctAnswer = num1 + num2;
-        } else {
-          operator = '-';
-          if (num2 > num1) {
-            final temp = num1;
-            num1 = num2;
-            num2 = temp;
-          }
-          correctAnswer = num1 - num2;
-        }
+        _generateIntegerMdas(
+          random,
+          symbol: _easyOperationDeck[questionCount % _easyOperationDeck.length],
+        );
         break;
-
       case GameDifficulty.medium:
-        final operations = ['+', '-', '×'];
-        operator = operations[random.nextInt(operations.length)];
-        if (operator == '×') {
-          num1 = random.nextInt(10) + 1;
-          num2 = random.nextInt(10) + 1;
-          correctAnswer = num1 * num2;
-        } else {
-          num1 = random.nextInt(20) + 1;
-          num2 = random.nextInt(20) + 1;
-          if (operator == '+') {
-            correctAnswer = num1 + num2;
-          } else {
-            if (num2 > num1) {
-              final temp = num1;
-              num1 = num2;
-              num2 = temp;
-            }
-            correctAnswer = num1 - num2;
-          }
-        }
+        _generateFractionMdas(
+          random,
+          hard: false,
+          symbol:
+              _mediumOperationDeck[questionCount % _mediumOperationDeck.length],
+        );
         break;
-
       case GameDifficulty.hard:
-        final operations = ['+', '-', '×', '÷'];
-        operator = operations[random.nextInt(operations.length)];
-        if (operator == '×') {
-          num1 = random.nextInt(12) + 1;
-          num2 = random.nextInt(10) + 1;
-          correctAnswer = num1 * num2;
-        } else if (operator == '÷') {
-          num2 = random.nextInt(10) + 1;
-          correctAnswer = random.nextInt(10) + 1;
-          num1 = num2 * correctAnswer;
-        } else {
-          num1 = random.nextInt(30) + 1;
-          num2 = random.nextInt(20) + 1;
-          if (operator == '+') {
-            correctAnswer = num1 + num2;
-          } else {
-            if (num2 > num1) {
-              final temp = num1;
-              num1 = num2;
-              num2 = temp;
-            }
-            correctAnswer = num1 - num2;
-          }
+        if (_hardQuestionDeck.isEmpty) _prepareQuestionDecks();
+        final questionType =
+            _hardQuestionDeck[questionCount % _hardQuestionDeck.length];
+        if (questionType.startsWith('fraction:')) {
+          _generateFractionMdas(
+            random,
+            hard: true,
+            symbol: questionType.split(':').last,
+          );
+          break;
+        }
+        switch (questionType) {
+          case 'gcf':
+            _generateGcfQuestion(random);
+            break;
+          case 'lcd':
+            _generateLcdQuestion(random);
+            break;
+          case 'geometry':
+            _generateGeometryQuestion(random);
+            break;
+          default:
+            _generateFractionMdas(random, hard: true, symbol: '+');
         }
         break;
     }
 
-    setState(() => question = '$num1 $operator $num2 = ?');
+    setState(() {});
     startQuestionTimer();
+  }
+
+  bool _matchesAnswer(String input) {
+    final answer = input.trim().replaceAll(' ', '');
+    if (answer.isEmpty) return false;
+
+    final parts = answer.split('/');
+    if (parts.length == 2) {
+      final numerator = int.tryParse(parts[0]);
+      final denominator = int.tryParse(parts[1]);
+      if (numerator == null || denominator == null || denominator == 0) {
+        return false;
+      }
+      return numerator * _answerDenominator ==
+          _answerNumerator * denominator;
+    }
+
+    final decimal = double.tryParse(answer);
+    if (decimal == null) return false;
+    return (decimal - _answerNumerator / _answerDenominator).abs() < 0.0001;
   }
 
   // CHECK ANSWER
@@ -499,8 +698,7 @@ class _MathGameState extends State<MathGame> {
       return;
     }
     questionTimer?.cancel();
-    final userAnswer = int.tryParse(answerController.text.trim()) ?? -999;
-    bool isCorrect = userAnswer == correctAnswer;
+    bool isCorrect = _matchesAnswer(answerController.text);
     if (isTimeout) {
       isCorrect = false;
       feedbackText = "Time's up! ❌ Correct: $correctAnswer";
@@ -589,10 +787,8 @@ class _MathGameState extends State<MathGame> {
     _gameSession++;
     _duckToken++;
     setState(() {
-      num1 = 0;
-      num2 = 0;
-      correctAnswer = 0;
-      operator = '+';
+      _answerNumerator = 0;
+      _answerDenominator = 1;
       question = '';
       correctCount = 0;
       wrongCount = 0;
@@ -614,6 +810,7 @@ class _MathGameState extends State<MathGame> {
       xpGained = 0;
       answerController.clear();
     });
+    _prepareQuestionDecks();
     _startBackgroundMusic();
     generateQuestion();
   }
@@ -719,71 +916,40 @@ class _MathGameState extends State<MathGame> {
     );
   }
 
-  // OPTIONS SCREEN
+  Future<void> _toggleMusicMute() =>
+      changeMusicVolume(musicVolume <= 0 ? _lastMusicVolume : 0.0);
+
+  Future<void> _toggleSoundMute() =>
+      changeSoundVolume(soundVolume <= 0 ? _lastSoundVolume : 0.0);
+
+  Future<void> _toggleMuteAll() async {
+    if (musicVolume <= 0 && soundVolume <= 0) {
+      await Future.wait([
+        changeMusicVolume(_lastMusicVolume),
+        changeSoundVolume(_lastSoundVolume),
+      ]);
+    } else {
+      if (musicVolume > 0) _lastMusicVolume = musicVolume;
+      if (soundVolume > 0) _lastSoundVolume = soundVolume;
+      await Future.wait([
+        changeMusicVolume(0.0),
+        changeSoundVolume(0.0),
+      ]);
+    }
+  }
+
   Widget _buildOptionsScreen() {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(colors: [Color(0xFF4A0E4E), Color(0xFF811252), Color(0xFF2E0854)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(22),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 440),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B0B46).withOpacity(0.96),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: const Color(0xFFFFD700), width: 3),
-                    boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 18, offset: Offset(0, 8))],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('⚙️ OPTIONS', textAlign: TextAlign.center, style: TextStyle(color: Color(0xFFFFD700), fontSize: 30, fontWeight: FontWeight.w900, letterSpacing: 1.4)),
-                      const SizedBox(height: 8),
-                      Text('Adjust your game audio', textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 15, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 28),
-                      _buildOptionsVolumeSlider(title: '🎵 Background Music', value: musicVolume, onChanged: changeMusicVolume),
-                      const SizedBox(height: 22),
-                      _buildOptionsVolumeSlider(title: '🔊 Sound Effects', value: soundVolume, onChanged: changeSoundVolume),
-                      const SizedBox(height: 30),
-                      _buildOptionsButton(text: '← Back', color: const Color(0xFFFFD700), shadowColor: const Color(0xFFB8860B), textColor: const Color(0xFF3B0B46), onPressed: () => setState(() => showOptions = false)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    return OptionsMenu(
+      musicVolume: musicVolume,
+      onMusicVolumeChanged: changeMusicVolume,
+      onMusicMuteToggle: _toggleMusicMute,
+      soundVolume: soundVolume,
+      onSoundVolumeChanged: changeSoundVolume,
+      onSoundMuteToggle: _toggleSoundMute,
+      onMuteAll: _toggleMuteAll,
+      allMuted: musicVolume <= 0 && soundVolume <= 0,
+      onBack: () => setState(() => showOptions = false),
     );
-  }
-
-  Widget _buildOptionsVolumeSlider({required String title, required double value, required ValueChanged<double> onChanged}) {
-    final percentage = (value * 100).round();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.65), width: 1.5)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))), Text('$percentage%', style: const TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.w900, fontSize: 17))]),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(activeTrackColor: const Color(0xFFFFD700), inactiveTrackColor: Colors.white24, thumbColor: Colors.white, overlayColor: const Color(0xFFFFD700).withOpacity(0.18), trackHeight: 6),
-            child: Slider(value: value.clamp(0.0, 1.0), min: 0, max: 1, divisions: 100, label: '$percentage%', onChanged: onChanged),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOptionsButton({required String text, required Color color, required Color shadowColor, required Color textColor, required VoidCallback onPressed}) {
-    return _3DButton(text: text, color: color, shadowColor: shadowColor, textColor: textColor, onPressed: onPressed);
   }
 
   // HEADER
@@ -863,7 +1029,25 @@ class _MathGameState extends State<MathGame> {
             boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 15, offset: Offset(0, 8))],
           ),
           child: Center(
-            child: Text(question, style: const TextStyle(fontSize: 44, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 2, shadows: [Shadow(color: Colors.black45, offset: Offset(2, 3), blurRadius: 4)])),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                question,
+                style: const TextStyle(
+                  fontSize: 40,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  letterSpacing: 1,
+                  shadows: [
+                    Shadow(
+                      color: Colors.black45,
+                      offset: Offset(2, 3),
+                      blurRadius: 4,
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
         Column(
@@ -881,7 +1065,10 @@ class _MathGameState extends State<MathGame> {
                 child: TextField(
                   controller: answerController,
                   focusNode: focusNode,
-                  keyboardType: TextInputType.number,
+                  keyboardType: TextInputType.text,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9./-]')),
+                  ],
                   enabled: !isPaused && !gameOver,
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Color(0xFF2E0854)),

@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../models/game_difficulty.dart';
 import '../services/audio_settings.dart';
 import '../services/score_identity.dart';
+import '../widgets/options_menu.dart';
 import '../widgets/pause_menu.dart';
 import '../widgets/player_avatar.dart';
 
@@ -58,6 +59,8 @@ class _PathFinderState extends State<PathFinder> {
 
   double musicVolume = AudioSettings.defaultVolume;
   double soundVolume = AudioSettings.defaultVolume;
+  double _lastMusicVolume = AudioSettings.defaultVolume;
+  double _lastSoundVolume = AudioSettings.defaultVolume;
 
   List<List<bool>> maze = [];
   List<Point<int>> tracedPath = [];
@@ -122,6 +125,8 @@ class _PathFinderState extends State<PathFinder> {
       setState(() {
         musicVolume = AudioSettings.instance.musicVolume;
         soundVolume = AudioSettings.instance.soundVolume;
+        if (musicVolume > 0) _lastMusicVolume = musicVolume;
+        if (soundVolume > 0) _lastSoundVolume = soundVolume;
       });
 
       // Must run before any sound plays, so effects never take the
@@ -203,6 +208,7 @@ class _PathFinderState extends State<PathFinder> {
     setState(() {
       musicVolume = value;
       musicStoppedForMute = value <= 0;
+      if (value > 0) _lastMusicVolume = value;
     });
 
     try {
@@ -224,7 +230,10 @@ class _PathFinderState extends State<PathFinder> {
   }
 
   Future<void> changeSoundVolume(double value) async {
-    setState(() => soundVolume = value);
+    setState(() {
+      soundVolume = value;
+      if (value > 0) _lastSoundVolume = value;
+    });
     try {
       await AudioSettings.instance.setSoundVolume(value);
       await audioPlayer.setVolume(value);
@@ -243,171 +252,40 @@ class _PathFinderState extends State<PathFinder> {
     setState(() => showOptions = false);
   }
 
-  // OPTIONS SCREEN (same design as the Math game)
+  Future<void> _toggleMusicMute() =>
+      changeMusicVolume(musicVolume <= 0 ? _lastMusicVolume : 0);
+
+  Future<void> _toggleSoundMute() =>
+      changeSoundVolume(soundVolume <= 0 ? _lastSoundVolume : 0);
+
+  Future<void> _toggleMuteAll() async {
+    if (musicVolume <= 0 && soundVolume <= 0) {
+      await Future.wait([
+        changeMusicVolume(_lastMusicVolume),
+        changeSoundVolume(_lastSoundVolume),
+      ]);
+    } else {
+      if (musicVolume > 0) _lastMusicVolume = musicVolume;
+      if (soundVolume > 0) _lastSoundVolume = soundVolume;
+      await Future.wait([
+        changeMusicVolume(0),
+        changeSoundVolume(0),
+      ]);
+    }
+  }
+
+  // Use the shared options appearance and controls used by Science Puzzle.
   Widget _buildOptionsScreen() {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF4A0E4E), Color(0xFF811252), Color(0xFF2E0854)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(22),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 440),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B0B46).withValues(alpha: 0.96),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: const Color(0xFFFFD700),
-                      width: 3,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black45,
-                        blurRadius: 18,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '⚙️ OPTIONS',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFFFFD700),
-                          fontSize: 30,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Adjust your game audio',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.85),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      _buildOptionsVolumeSlider(
-                        title: '🎵 Background Music',
-                        value: musicVolume,
-                        onChanged: changeMusicVolume,
-                      ),
-                      const SizedBox(height: 22),
-                      _buildOptionsVolumeSlider(
-                        title: '🔊 Sound Effects',
-                        value: soundVolume,
-                        onChanged: changeSoundVolume,
-                      ),
-                      const SizedBox(height: 30),
-                      _buildOptionsButton(
-                        text: '← Back',
-                        color: const Color(0xFFFFD700),
-                        shadowColor: const Color(0xFFB8860B),
-                        textColor: const Color(0xFF3B0B46),
-                        onPressed: _hideGameOptions,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionsVolumeSlider({
-    required String title,
-    required double value,
-    required ValueChanged<double> onChanged,
-  }) {
-    final percentage = (value * 100).round();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFFFD700).withValues(alpha: 0.65),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              Text(
-                '$percentage%',
-                style: const TextStyle(
-                  color: Color(0xFFFFD700),
-                  fontWeight: FontWeight.w900,
-                  fontSize: 17,
-                ),
-              ),
-            ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: const Color(0xFFFFD700),
-              inactiveTrackColor: Colors.white24,
-              thumbColor: Colors.white,
-              overlayColor: const Color(0xFFFFD700).withValues(alpha: 0.18),
-              trackHeight: 6,
-            ),
-            child: Slider(
-              value: value.clamp(0.0, 1.0),
-              min: 0,
-              max: 1,
-              divisions: 100,
-              label: '$percentage%',
-              onChanged: onChanged,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOptionsButton({
-    required String text,
-    required Color color,
-    required Color shadowColor,
-    required Color textColor,
-    required VoidCallback onPressed,
-  }) {
-    return _3DButton(
-      text: text,
-      color: color,
-      shadowColor: shadowColor,
-      textColor: textColor,
-      onPressed: onPressed,
+    return OptionsMenu(
+      musicVolume: musicVolume,
+      onMusicVolumeChanged: changeMusicVolume,
+      onMusicMuteToggle: _toggleMusicMute,
+      soundVolume: soundVolume,
+      onSoundVolumeChanged: changeSoundVolume,
+      onSoundMuteToggle: _toggleSoundMute,
+      onMuteAll: _toggleMuteAll,
+      allMuted: musicVolume <= 0 && soundVolume <= 0,
+      onBack: _hideGameOptions,
     );
   }
 
@@ -932,17 +810,39 @@ class _PathFinderState extends State<PathFinder> {
         children: [
           const SizedBox(width: 48),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
+              color: Colors.black.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white24),
+              border: Border.all(
+                color: const Color(0xFFFFD700),
+                width: 1.5,
+              ),
             ),
-            child: const Text('Path Finder', style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            )),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'LEVEL 8: PATH FINDER',
+                  style: TextStyle(
+                    color: Color(0xFFFFD700),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${widget.difficulty.label} MODE',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 10,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
           ),
           if (!isGameOver)
             IconButton(
@@ -1065,7 +965,7 @@ class _PathFinderState extends State<PathFinder> {
         ? 'Study the revealed maze.'
         : isPreview
             ? 'Memorize the route before the maze hides.'
-            : 'Drag from your avatar through the corridors to FINISH (F).';
+            : 'Drag from your avatar through the corridors to the exit (🚪).';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1523,7 +1423,7 @@ class _MazePainter extends CustomPainter {
       Paint()..color = startColor,
     );
 
-    _drawMarker(canvas, goal, cellSize, finishColor, 'F');
+    _drawMarker(canvas, goal, cellSize, finishColor, '🚪');
 
     if (showTryAgain) {
       final textPainter = TextPainter(

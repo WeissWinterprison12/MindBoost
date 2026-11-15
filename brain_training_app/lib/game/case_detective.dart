@@ -345,8 +345,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
       await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
         'level': 6,
-        'levelName': 'Logic Detective',
-        // Same format as the other levels.
+        'levelName': 'Case Detective',
         'difficulty': widget.difficulty.label,
         'caseTitle': _currentCase.title,
         'selectedAnswer': _selectedAnswer == null
@@ -540,15 +539,46 @@ class _LogicDetectiveState extends State<LogicDetective> {
           // title stays centered in the header.
           const SizedBox(width: 48),
 
-          const Expanded(
-            child: Text(
-              'LOGIC DETECTIVE',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Color(0xFFFFD700),
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
+          Expanded(
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFFFD700),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'LEVEL 6: LOGIC DETECTIVE',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFFFFD700),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${widget.difficulty.label} MODE',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 10,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
