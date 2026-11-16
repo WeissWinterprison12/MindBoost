@@ -635,6 +635,44 @@ const List<List<String>> _mathQ = [
 ];
 const List<String> _time23 = ['∞', '60s', '45s'];
 
+Widget _sciencePicture({bool matched = false}) => ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: 190,
+        height: 108,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              'assets/images/science_game/biology_body.png',
+              fit: BoxFit.cover,
+            ),
+            Align(
+              alignment: const Alignment(0, 0.04),
+              child: Container(
+                width: 25,
+                height: 25,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: matched ? const Color(0xFF2E9E44) : _amber,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: Text(
+                  matched ? '✓' : 'A',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
 final List<_TutorialPage> _pages = [
   // ----- Intro -----
   _TutorialPage(
@@ -650,7 +688,7 @@ final List<_TutorialPage> _pages = [
         visual: _col([
           for (final x in const [
             ['Math Challenge', 0xFF1E88E5],
-            ['Science Puzzle', 0xFF2E9E6A],
+            ['Picture Puzzle', 0xFF2E9E6A],
             ['Memory Match', 0xFF7E3FD0],
             ['Pattern Logic', 0xFFF29A1F],
           ])
@@ -779,7 +817,7 @@ final List<_TutorialPage> _pages = [
   // ----- Level 2 -----
   _TutorialPage(
     emoji: '🧩',
-    title: 'LEVEL 2: SCIENCE PUZZLE',
+    title: 'LEVEL 2: PICTURE PUZZLE',
     goal: 'Rebuild the science picture.',
     diffs: const [
       _Diff('∞', '3×3 pieces. Look for 10 sec. Unlimited time. Moves are counted.'),
@@ -1208,6 +1246,61 @@ final List<_TutorialPage> _pages = [
           const _Chip('XP', '0', _gold),
           const _Chip('LIVES', '❤️❤️🖤', Colors.white),
         ],
+      ),
+    ],
+  ),
+
+  // ----- Level 9 -----
+  _TutorialPage(
+    emoji: '🔬',
+    title: 'LEVEL 9: SCIENCE GAME',
+    goal: 'Drag each science answer to its matching question.',
+    diffs: const [
+      _Diff('∞', 'No timer. Match 3 science questions.'),
+      _Diff('50s', 'Match 4 questions before time runs out.'),
+      _Diff('30s', 'Match all 5 questions before time runs out.'),
+    ],
+    hud: (dd) => [
+      if (dd > 0) _Chip('TIME', dd == 1 ? '50s' : '30s', _cyan),
+      _Chip('MATCHED', '0/${dd == 0 ? 3 : dd == 1 ? 4 : 5}', _mint),
+      const _Chip('XP', '0', _gold),
+    ],
+    steps: (dd) => [
+      _Step(
+        label: 'READ THE SCIENCE CLUE',
+        labelColor: _cyan,
+        visual: _col([
+          _sciencePicture(),
+          _t('HUMAN BODY', size: 12, color: _amber),
+          _ev(1, 'This is where the air we breathe goes.'),
+        ], gap: 8),
+        sub: 'Study the picture and the question clues',
+        caption: 'Read each clue and find the matching answer.',
+      ),
+      _Step(
+        label: 'DRAG THE ANSWER',
+        labelColor: _amber,
+        visual: _col([
+          _sciencePicture(),
+          _ev(1, 'This is where the air we breathe goes.'),
+          _pill('↕  LUNGS', _btn, width: 150),
+          _t('Drag LUNGS onto question 1', size: 12, color: Colors.white70),
+        ], gap: 8),
+        sub: 'Drag a word label onto its matching question',
+        caption: 'Drop the correct science term on the clue.',
+      ),
+      _Step(
+        label: 'MATCH THEM ALL',
+        labelColor: _mint,
+        visual: _col([
+          _sciencePicture(matched: true),
+          _pill('✓  LUNGS', const Color(0xFF2E9E44), width: 150),
+          _pill('NOSE', _btn, width: 150),
+          _t('${dd == 0 ? 3 : dd == 1 ? 4 : 5} questions to match',
+              size: 12, color: Colors.white70),
+        ], gap: 8),
+        sub: 'Complete every match to finish the challenge',
+        caption: 'Match all the answers before the timer ends.',
       ),
     ],
   ),

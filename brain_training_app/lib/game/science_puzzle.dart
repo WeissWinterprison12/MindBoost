@@ -312,12 +312,10 @@ class _SciencePuzzleState extends State<SciencePuzzle>
           await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
 
-        // Level information
         'level': 2,
-        'levelName': 'Science Puzzle',
+        'levelName': 'Picture Puzzle',
         'difficulty': widget.difficulty.label,
 
-        // Game results
         'image': selectedImage,
         'moves': moves,
         'score': score,
@@ -325,24 +323,18 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         'grade': win ? getGrade() : 'F',
         'completed': win,
 
-        // Timestamp
         'timestamp': FieldValue.serverTimestamp(),
       });
       await ScoreIdentity.recordRecentGame(scoreReference);
 
-      debugPrint('Science Puzzle score saved successfully.');
+      debugPrint('Picture Puzzle score saved successfully.');
     } catch (e) {
-      debugPrint('Error saving Science Puzzle score: $e');
+      debugPrint('Error saving Picture Puzzle score: $e');
     }
   }
 
-  // ============================================================
-  // NAVIGATION
-  // ============================================================
-
   void goToMainMenu() => Navigator.pop(context);
 
-  // PREVIOUS LEVEL → Level 1: Math (same difficulty)
   void goToPreviousLevel() {
     Navigator.pushReplacement(
       context,
@@ -352,7 +344,6 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
-  // NEXT LEVEL → Level 3: Memory Match (same difficulty)
   void goToNextLevel() {
     Navigator.pushReplacement(
       context,
@@ -436,7 +427,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'LEVEL 2: SCIENCE PUZZLE',
+                    'LEVEL 2: PICTURE PUZZLE',
                     style: TextStyle(
                       color: Color(0xFFFFD700),
                       fontWeight: FontWeight.w900,

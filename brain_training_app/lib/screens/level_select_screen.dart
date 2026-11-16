@@ -295,9 +295,9 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
 
                     GameLevelCard(
                       levelNum: '2',
-                      title: 'Science Puzzle',
+                      title: 'Picture Puzzle',
                       subtitle: 'Memory & Observation',
-                      icon: '🔬',
+                      icon: '⚛️',
                       gradientColors: const [
                         Color(0xFF11998E),
                         Color(0xFF38EF7D),

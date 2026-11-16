@@ -156,10 +156,6 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
 
   int get totalTiles => gridColumns * gridRows;
 
-  // ============================================================
-  // INITIALIZATION
-  // ============================================================
-
   @override
   void initState() {
     super.initState();

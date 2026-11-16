@@ -36,7 +36,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 
   static const List<String> gameNames = [
     'Math Game',
-    'Science Puzzle',
+    'Picture Puzzle',
     'Memory Match',
     'Pattern Sequence',
     'Memory Matrix',
@@ -119,7 +119,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   int _sampleXpForGame(String game, Random random) {
     final (minimum, maximum) = switch (game) {
       'Math Game' => (100, 180),
-      'Science Puzzle' => (40, 100),
+      'Picture Puzzle' => (40, 100),
       'Memory Match' => (25, 75),
       'Pattern Sequence' => (30, 90),
       'Memory Matrix' => (30, 80),
