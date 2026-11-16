@@ -637,7 +637,8 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
           ? 0.0
           : (roundsCompleted / attempts) * 100;
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
         'level': 5,
         'levelName': 'Tile Matrix',
@@ -652,6 +653,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
         'completed': roundsCompleted >= maxRounds,
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
 
       debugPrint('Memory Matrix score saved successfully.');
 

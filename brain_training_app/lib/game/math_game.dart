@@ -762,7 +762,8 @@ class _MathGameState extends State<MathGame> {
   Future<void> saveScore() async {
     try {
       final identityFields = await ScoreIdentity.fields();
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
         'level': 1,
         'levelName': 'Math',
@@ -775,6 +776,7 @@ class _MathGameState extends State<MathGame> {
         'grade': getGrade(),
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
       debugPrint('Math Game score saved successfully.');
     } catch (error) {
       debugPrint('Could not save Math Game score: $error');

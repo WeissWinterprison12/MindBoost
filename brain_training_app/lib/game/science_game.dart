@@ -711,7 +711,7 @@ class _ScienceGameState extends State<ScienceGame>
     try {
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance
+      final scoreReference = await FirebaseFirestore.instance
           .collection('scores')
           .add({
         ...identityFields,
@@ -719,7 +719,7 @@ class _ScienceGameState extends State<ScienceGame>
         // Update this level number if Body Explorer
         // is assigned to a different level in your game.
         'level': 9,
-        'levelName': 'Body Explorer',
+        'levelName': 'Science Game',
 
         'difficulty': widget.difficulty.label,
 
@@ -740,6 +740,7 @@ class _ScienceGameState extends State<ScienceGame>
 
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
 
       debugPrint('Body Explorer score saved successfully.');
     } catch (e) {

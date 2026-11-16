@@ -88,4 +88,66 @@ class ScoreIdentity {
       'avatar': me.avatar,
     };
   }
+
+  /// Adds a saved score to the player's rolling ten-game profile history.
+  /// The full score remains in `scores` for leaderboard totals.
+  static Future<void> recordRecentGame(
+    DocumentReference<Map<String, dynamic>> scoreReference,
+  ) async {
+    try {
+      final scoreSnapshot = await scoreReference.get();
+      final score = scoreSnapshot.data();
+      final playerId = score?['playerId'];
+      if (score == null || playerId is! String || playerId.isEmpty) return;
+
+      final entry = _historyEntry(score, scoreReference.id);
+      final profile = FirebaseFirestore.instance
+          .collection('users')
+          .doc(playerId);
+
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final snapshot = await transaction.get(profile);
+        final rawHistory = snapshot.data()?['playedGameHistory'];
+        final history = rawHistory is List
+            ? rawHistory
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList()
+            : <Map<String, dynamic>>[];
+
+        // A save callback can be retried. Keep one history card per score.
+        if (history.any((item) => item['historyId'] == scoreReference.id)) {
+          return;
+        }
+
+        history.add(entry);
+        if (history.length > 10) {
+          history.removeRange(0, history.length - 10);
+        }
+
+        transaction.set(
+          profile,
+          {'playedGameHistory': history},
+          SetOptions(merge: true),
+        );
+      });
+    } catch (error) {
+      debugPrint('Could not update recent game history: $error');
+    }
+  }
+
+  static Map<String, dynamic> _historyEntry(
+    Map<String, dynamic> score,
+    String documentId,
+  ) {
+    final entry = Map<String, dynamic>.from(score)
+      ..remove('playerId')
+      ..remove('playerName')
+      ..remove('avatar')
+      ..remove('timestamp');
+    entry['historyId'] = documentId;
+    entry['timestamp'] = Timestamp.now();
+    return entry;
+  }
+
 }

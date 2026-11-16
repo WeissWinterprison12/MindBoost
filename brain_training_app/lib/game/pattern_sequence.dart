@@ -356,7 +356,8 @@ class _PatternSequenceState extends State<PatternSequence>
       // Get the current player's identity.
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         // Shared player identity
         ...identityFields,
 
@@ -379,6 +380,7 @@ class _PatternSequenceState extends State<PatternSequence>
         // Timestamp
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
 
       debugPrint('Pattern Logic score saved successfully.');
     } catch (e) {

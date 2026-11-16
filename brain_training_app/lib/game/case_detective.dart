@@ -342,7 +342,8 @@ class _LogicDetectiveState extends State<LogicDetective> {
     try {
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
         'level': 6,
         'levelName': 'Case Detective',
@@ -365,6 +366,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
         'timeRemaining': _timeLimit == null ? null : _timeRemaining,
         'timestamp': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 5));
+      await ScoreIdentity.recordRecentGame(scoreReference);
     } catch (e) {
       // Not connected, not configured, or too slow: the game carries on.
       debugPrint('Could not save Logic Detective score: $e');

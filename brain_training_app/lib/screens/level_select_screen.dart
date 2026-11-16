@@ -19,8 +19,10 @@ import '../game/path_finder.dart';
 import '../game/word_quest.dart';
 
 import '../services/menu_music.dart';
+import '../services/score_identity.dart';
 import '../widgets/game_loading_screen.dart';
 import '../widgets/menu_options.dart';
+import 'game_history_screen.dart';
 
 /// When true, the next screen pushed on top of the level select screen
 /// (the profile editor) will NOT pause the menu music.
@@ -675,11 +677,24 @@ class PlayerProfileButton extends StatelessWidget {
                     color: Color(0xFF811252),
                   ),
                   title: const Text('MindBoost Player'),
-                  subtitle: Text(
-                    user == null
-                        ? 'Guest account'
-                        : 'Signed in to save your progress',
+                  subtitle: const Text('View History • Latest 10 games'),
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0xFF811252),
                   ),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final playerId = user?.uid ??
+                        (await ScoreIdentity.load()).id;
+                    if (!context.mounted) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => GameHistoryScreen(
+                          playerId: playerId,
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
                 SizedBox(

@@ -837,7 +837,8 @@ class _WordQuestGameState extends State<WordQuestGame>
       // Player identity, so this score counts on the leaderboard.
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
         'level': 7,
         'levelName': 'Word Quest',
@@ -853,6 +854,7 @@ class _WordQuestGameState extends State<WordQuestGame>
         'completed': true,
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
 
       if (mounted) {
         setState(() {

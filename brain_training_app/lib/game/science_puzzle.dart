@@ -308,7 +308,8 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     try {
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
 
         // Level information
@@ -327,6 +328,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
         // Timestamp
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
 
       debugPrint('Science Puzzle score saved successfully.');
     } catch (e) {

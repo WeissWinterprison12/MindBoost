@@ -738,7 +738,8 @@ class _PathFinderState extends State<PathFinder> {
       // Player identity, so this score counts on the leaderboard.
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         ...identityFields,
         'level': 8,
         'levelName': 'Path Finder',
@@ -754,6 +755,7 @@ class _PathFinderState extends State<PathFinder> {
         'grade': grade,
         'timestamp': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 5));
+      await ScoreIdentity.recordRecentGame(scoreReference);
     } catch (error) {
       debugPrint('Could not save Path Finder score: $error');
     }

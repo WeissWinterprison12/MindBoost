@@ -537,7 +537,8 @@ class _MemoryMatchState extends State<MemoryMatch>
       // Get the current player's identity.
       final identityFields = await ScoreIdentity.fields();
 
-      await FirebaseFirestore.instance.collection('scores').add({
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
         // Shared player identity
         ...identityFields,
 
@@ -557,6 +558,7 @@ class _MemoryMatchState extends State<MemoryMatch>
         // Timestamp
         'timestamp': FieldValue.serverTimestamp(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
 
       debugPrint('Memory Match score saved successfully.');
     } catch (e) {

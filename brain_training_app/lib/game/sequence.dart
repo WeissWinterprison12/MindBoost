@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 
+import '../services/score_identity.dart';
 import '../widgets/pause_menu.dart';
 
 class SequenceRecall extends StatefulWidget {
@@ -319,8 +320,12 @@ class _SequenceRecallState extends State<SequenceRecall> {
 
   Future<void> saveScore(bool win) async {
     try {
-      await FirebaseFirestore.instance.collection('scores').add({
+      final identityFields = await ScoreIdentity.fields();
+      final scoreReference =
+          await FirebaseFirestore.instance.collection('scores').add({
+        ...identityFields,
         'level': 'Sequence Recall',
+        'levelName': 'Sequence Recall',
         'roundsCompleted': correctRounds,
         'totalRounds': totalRounds,
         'wrongRounds': wrongRounds,
@@ -330,6 +335,7 @@ class _SequenceRecallState extends State<SequenceRecall> {
         'completed': win,
         'timestamp': DateTime.now(),
       });
+      await ScoreIdentity.recordRecentGame(scoreReference);
     } catch (e) {
       debugPrint('Error saving Sequence Recall score: $e');
     }
