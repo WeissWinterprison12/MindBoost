@@ -101,6 +101,9 @@ class _PatternSequenceState extends State<PatternSequence>
   bool lastAnswerCorrect = false;
   int _session = 0;
 
+  // Progress message shown on the result screen (null while loading).
+  _ProgressMessage? progressMessage;
+
   int get totalCorrect => patternCorrect;
   int get totalAttempts => patternCorrect + patternWrong;
   double get accuracy =>
@@ -167,6 +170,7 @@ class _PatternSequenceState extends State<PatternSequence>
     showOptions = false;
     feedbackText = '';
     lastAnswerCorrect = false;
+    progressMessage = null;
   }
 
   void restartGame() {
@@ -356,6 +360,10 @@ class _PatternSequenceState extends State<PatternSequence>
       // Get the current player's identity.
       final identityFields = await ScoreIdentity.fields();
 
+      // Compare against past games BEFORE saving this one, so the
+      // current game isn't compared with itself.
+      await _evaluateProgress(identityFields);
+
       final scoreReference =
           await FirebaseFirestore.instance.collection('scores').add({
         // Shared player identity
@@ -386,6 +394,175 @@ class _PatternSequenceState extends State<PatternSequence>
     } catch (e) {
       debugPrint('Error saving Pattern Logic score: $e');
     }
+  }
+
+  // ============================================================
+  // PROGRESS COMPARISON
+  // (uses the same playedGameHistory as game_history.dart)
+  // ============================================================
+
+  // NOTE: this assumes ScoreIdentity.fields() contains the player id under
+  // 'playerId', 'userId' or 'uid'. Change the keys below if yours differs.
+  Future<List<Map<String, dynamic>>> _loadPreviousGames(
+    Map<String, dynamic> identityFields,
+  ) async {
+    final playerId = (identityFields['playerId'] ??
+            identityFields['userId'] ??
+            identityFields['uid'])
+        ?.toString();
+    if (playerId == null || playerId.isEmpty) return [];
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(playerId)
+        .get();
+
+    final raw = doc.data()?['playedGameHistory'];
+    if (raw is! List) return [];
+
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((g) =>
+            (g['levelName'] ?? g['gameName'] ?? g['game']) ==
+                'Pattern Logic' &&
+            g['difficulty'] == widget.difficulty.label)
+        .toList(); // oldest -> newest (same order the history screen uses)
+  }
+
+  Future<void> _evaluateProgress(Map<String, dynamic> identityFields) async {
+    List<Map<String, dynamic>> previous = [];
+    try {
+      previous = await _loadPreviousGames(identityFields);
+    } catch (e) {
+      debugPrint('Could not load history: $e');
+    }
+
+    final message = _buildProgressMessage(previous);
+    if (!mounted) return;
+    setState(() => progressMessage = message);
+  }
+
+  _ProgressMessage _buildProgressMessage(List<Map<String, dynamic>> previous) {
+    int accOf(Map<String, dynamic> g) =>
+        (g['accuracy'] as num?)?.round() ?? 0;
+    int xpOf(Map<String, dynamic> g) => (g['xp'] as num?)?.round() ?? 0;
+    int streakOf(Map<String, dynamic> g) =>
+        (g['streak'] as num?)?.round() ?? 0;
+
+    final currentAcc = accuracy.round();
+    final grade = getGrade();
+    final total = questions.length;
+
+    // ---------- FIRST GAME ON THIS DIFFICULTY ----------
+    if (previous.isEmpty) {
+      if (passed) {
+        return _ProgressMessage(
+          title: 'FIRST CLEAR!',
+          detail: 'You earned a grade $grade with $currentAcc% accuracy. '
+              'That\'s your starting mark — can you beat it?',
+          icon: Icons.flag_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'GOOD TRY!',
+        detail: 'You got $patternCorrect/$total right. You need '
+            '${passAccuracy.round()}% to pass — look closely at how each '
+            'pattern changes and try again!',
+        icon: Icons.refresh_rounded,
+        color: Colors.orangeAccent,
+      );
+    }
+
+    final bestAcc = previous.map(accOf).reduce(max);
+    final bestXp = previous.map(xpOf).reduce(max);
+    final bestPrevStreak = previous.map(streakOf).reduce(max);
+    final lastAcc = accOf(previous.last);
+
+    final streakNote = (bestStreak >= 3 && bestStreak > bestPrevStreak)
+        ? ' Longest streak yet: $bestStreak!'
+        : '';
+
+    // ---------- DID NOT PASS ----------
+    if (!passed) {
+      if (currentAcc > lastAcc) {
+        return _ProgressMessage(
+          title: 'GETTING BETTER!',
+          detail: '+${currentAcc - lastAcc}% over your last game, but you '
+              'need ${passAccuracy.round()}% to pass. Your best is $bestAcc%.',
+          icon: Icons.trending_up_rounded,
+          color: Colors.cyanAccent,
+        );
+      }
+      return _ProgressMessage(
+        title: 'KEEP PRACTICING!',
+        detail: 'You scored $currentAcc% (your best is $bestAcc%). '
+            'Look at the gap between each item to find the rule.',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    // ---------- NEW PERSONAL BEST ----------
+    if (currentAcc > bestAcc) {
+      return _ProgressMessage(
+        title: grade == 'S' ? 'PERFECT & A NEW BEST!' : 'NEW PERSONAL BEST!',
+        detail: '+${currentAcc - bestAcc}% accuracy over your previous best '
+            '($bestAcc%).$streakNote',
+        icon: Icons.emoji_events_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    // ---------- MATCHED BEST ACCURACY ----------
+    if (currentAcc == bestAcc) {
+      if (xp > bestXp) {
+        return _ProgressMessage(
+          title: 'SAME ACCURACY, MORE XP!',
+          detail: 'You matched your best accuracy ($bestAcc%) and earned '
+              '${xp - bestXp} more XP than ever before.$streakNote',
+          icon: Icons.stars_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'MATCHED YOUR BEST!',
+        detail: grade == 'S'
+            ? 'Still flawless — you\'re at the top of your game.$streakNote'
+            : 'You tied your best accuracy ($bestAcc%). '
+                'One more correct answer could beat it!$streakNote',
+        icon: Icons.equalizer_rounded,
+        color: Colors.lightGreenAccent,
+      );
+    }
+
+    // ---------- BETTER THAN LAST GAME ----------
+    if (currentAcc > lastAcc) {
+      return _ProgressMessage(
+        title: 'YOU\'RE IMPROVING!',
+        detail: '+${currentAcc - lastAcc}% compared to your last game. '
+            'Your best is $bestAcc%.$streakNote',
+        icon: Icons.trending_up_rounded,
+        color: Colors.cyanAccent,
+      );
+    }
+
+    // ---------- WORSE THAN BEFORE ----------
+    final gap = bestAcc - currentAcc;
+    final tip = patternWrong == 1
+        ? 'You missed just 1 question — double-check the pattern before '
+            'answering.'
+        : 'You missed $patternWrong questions — look closely at how each '
+            'pattern changes.';
+    return _ProgressMessage(
+      title: grade == 'S' || grade == 'A'
+          ? 'GREAT, BUT NOT YOUR BEST'
+          : 'NOT YOUR BEST YET',
+      detail: '$gap% below your best ($bestAcc%). $tip',
+      icon: Icons.trending_down_rounded,
+      color: Colors.orangeAccent,
+    );
   }
 
   // ============================================================
@@ -829,6 +1006,63 @@ class _PatternSequenceState extends State<PatternSequence>
     );
   }
 
+  // PROGRESS CARD (result screen)
+  Widget _buildProgressCard() {
+    final message = progressMessage;
+
+    if (message == null) {
+      return const Center(
+        child: SizedBox(
+          height: 18,
+          width: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white54,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: message.color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: message.color),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(message.icon, color: message.color, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: message.color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResultScreen() {
     return Center(
       child: SingleChildScrollView(
@@ -847,14 +1081,11 @@ class _PatternSequenceState extends State<PatternSequence>
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 8),
-              Text(
-                passed
-                    ? 'Great job spotting the patterns!'
-                    : 'Try again to improve your pattern logic score.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 14, color: Colors.white70),
-              ),
+              const SizedBox(height: 10),
+
+              // Progress message based on the player's history
+              _buildProgressCard(),
+
               const SizedBox(height: 16),
               Container(
                 padding:
@@ -1030,4 +1261,22 @@ class _PatternSequenceState extends State<PatternSequence>
     _shakeController.dispose();
     super.dispose();
   }
+}
+
+// ============================================================
+// PROGRESS MESSAGE MODEL
+// ============================================================
+
+class _ProgressMessage {
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  const _ProgressMessage({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
 }

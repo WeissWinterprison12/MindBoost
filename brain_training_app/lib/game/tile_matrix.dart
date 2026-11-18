@@ -154,6 +154,9 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
   bool isSaving = false;
   bool saveFailed = false;
 
+  // Progress message shown on the result screen (null while loading).
+  _ProgressMessage? progressMessage;
+
   int get totalTiles => gridColumns * gridRows;
 
   @override
@@ -230,6 +233,7 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     gameEnded = false;
     isSaving = false;
     saveFailed = false;
+    progressMessage = null;
 
     _updateDifficulty();
   }
@@ -627,6 +631,13 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     try {
       final identityFields = await ScoreIdentity.fields();
 
+      // Compare against past games BEFORE saving this one, so the
+      // current game isn't compared with itself. Only done once, so
+      // "Retry Saving" doesn't recompute the message.
+      if (progressMessage == null) {
+        await _evaluateProgress(identityFields);
+      }
+
       final attempts = roundsCompleted + wrongAttempts;
 
       final accuracy = attempts == 0
@@ -669,6 +680,186 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
         });
       }
     }
+  }
+
+  // ============================================================
+  // PROGRESS COMPARISON
+  // (uses the same playedGameHistory as game_history.dart)
+  // ============================================================
+
+  // NOTE: this assumes ScoreIdentity.fields() contains the player id under
+  // 'playerId', 'userId' or 'uid'. Change the keys below if yours differs.
+  Future<List<Map<String, dynamic>>> _loadPreviousGames(
+    Map<String, dynamic> identityFields,
+  ) async {
+    final playerId = (identityFields['playerId'] ??
+            identityFields['userId'] ??
+            identityFields['uid'])
+        ?.toString();
+    if (playerId == null || playerId.isEmpty) return [];
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(playerId)
+        .get();
+
+    final raw = doc.data()?['playedGameHistory'];
+    if (raw is! List) return [];
+
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((g) =>
+            (g['levelName'] ?? g['gameName'] ?? g['game']) == 'Tile Matrix' &&
+            g['difficulty'] == widget.difficulty.label)
+        .toList(); // oldest -> newest (same order the history screen uses)
+  }
+
+  Future<void> _evaluateProgress(Map<String, dynamic> identityFields) async {
+    List<Map<String, dynamic>> previous = [];
+    try {
+      previous = await _loadPreviousGames(identityFields);
+    } catch (e) {
+      debugPrint('Could not load history: $e');
+    }
+
+    final message = _buildProgressMessage(previous);
+    if (!mounted) return;
+    setState(() => progressMessage = message);
+  }
+
+  _ProgressMessage _buildProgressMessage(List<Map<String, dynamic>> previous) {
+    int scoreOf(Map<String, dynamic> g) => (g['score'] as num?)?.round() ?? 0;
+    int roundsOf(Map<String, dynamic> g) =>
+        (g['roundsCompleted'] as num?)?.round() ?? 0;
+    int xpOf(Map<String, dynamic> g) => (g['xp'] as num?)?.round() ?? 0;
+    int streakOf(Map<String, dynamic> g) =>
+        (g['streak'] as num?)?.round() ?? 0;
+
+    final bool completedAll = roundsCompleted >= maxRounds;
+    final bool flawless = completedAll && wrongAttempts == 0;
+
+    // ---------- NO ROUNDS CLEARED ----------
+    if (roundsCompleted == 0) {
+      if (previous.isEmpty) {
+        return const _ProgressMessage(
+          title: 'NO ROUNDS CLEARED',
+          detail: 'Study the glowing tiles carefully, then tap them from '
+              'memory. You can do it!',
+          icon: Icons.refresh_rounded,
+          color: Colors.redAccent,
+        );
+      }
+      final bestRounds = previous.map(roundsOf).reduce(max);
+      return _ProgressMessage(
+        title: 'KEEP PRACTICING!',
+        detail: 'No rounds cleared this time. Your best is $bestRounds '
+            '${bestRounds == 1 ? "round" : "rounds"} — you\'ve got this!',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    // ---------- FIRST GAME ON THIS DIFFICULTY ----------
+    if (previous.isEmpty) {
+      if (completedAll) {
+        return _ProgressMessage(
+          title: 'FIRST CLEAR!',
+          detail: 'You completed all $maxRounds rounds with $score points. '
+              'That\'s your starting mark — can you beat it?',
+          icon: Icons.flag_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'FIRST RUN!',
+        detail: 'You cleared $roundsCompleted/$maxRounds rounds '
+            '($score points). That\'s your starting mark — can you go '
+            'further?',
+        icon: Icons.flag_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    final bestScore = previous.map(scoreOf).reduce(max);
+    final bestRounds = previous.map(roundsOf).reduce(max);
+    final bestXp = previous.map(xpOf).reduce(max);
+    final bestPrevStreak = previous.map(streakOf).reduce(max);
+    final lastScore = scoreOf(previous.last);
+    final lastRounds = roundsOf(previous.last);
+
+    final streakNote = (bestStreak >= 3 && bestStreak > bestPrevStreak)
+        ? ' Longest streak yet: $bestStreak!'
+        : '';
+
+    // ---------- NEW PERSONAL BEST ----------
+    if (score > bestScore) {
+      return _ProgressMessage(
+        title: flawless ? 'PERFECT & A NEW BEST!' : 'NEW PERSONAL BEST!',
+        detail: '+${score - bestScore} points over your previous best '
+            '($bestScore) — $roundsCompleted rounds vs $bestRounds.'
+            '$streakNote',
+        icon: Icons.emoji_events_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    // ---------- MATCHED BEST SCORE ----------
+    if (score == bestScore) {
+      if (xp > bestXp) {
+        return _ProgressMessage(
+          title: 'SAME SCORE, MORE XP!',
+          detail: 'You matched your best score ($bestScore) and earned '
+              '${xp - bestXp} more XP than ever before.$streakNote',
+          icon: Icons.stars_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'MATCHED YOUR BEST!',
+        detail: flawless
+            ? 'Still flawless — you\'re at the top of your game.$streakNote'
+            : completedAll
+                ? 'You tied your best score. Fewer mistakes and a longer '
+                    'streak will earn you more XP!$streakNote'
+                : 'You tied your best score. One more round could beat '
+                    'it!$streakNote',
+        icon: Icons.equalizer_rounded,
+        color: Colors.lightGreenAccent,
+      );
+    }
+
+    // ---------- BETTER THAN LAST GAME ----------
+    if (score > lastScore) {
+      return _ProgressMessage(
+        title: 'YOU\'RE IMPROVING!',
+        detail: '+${score - lastScore} points compared to your last game '
+            '($roundsCompleted rounds vs $lastRounds). '
+            'Your best is $bestScore.$streakNote',
+        icon: Icons.trending_up_rounded,
+        color: Colors.cyanAccent,
+      );
+    }
+
+    // ---------- WORSE THAN BEFORE ----------
+    final gap = bestScore - score;
+    final tip = wrongAttempts == 0
+        ? 'Try to clear a few more rounds before time runs out.'
+        : hasTimer
+            ? 'You made $wrongAttempts '
+                '${wrongAttempts == 1 ? "mistake" : "mistakes"} — each one '
+                'costs ${wrongPenaltySeconds}s, so take a moment before '
+                'tapping.'
+            : 'You made $wrongAttempts '
+                '${wrongAttempts == 1 ? "mistake" : "mistakes"} — take a '
+                'moment to recall the tiles before tapping.';
+    final decent = roundsCompleted * 10 >= maxRounds * 7;
+    return _ProgressMessage(
+      title: decent ? 'GREAT, BUT NOT YOUR BEST' : 'NOT YOUR BEST YET',
+      detail: '$gap points below your best ($bestScore). $tip',
+      icon: Icons.trending_down_rounded,
+      color: Colors.orangeAccent,
+    );
   }
 
   // ============================================================
@@ -1235,6 +1426,63 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
     );
   }
 
+  /// Progress card shown on the result screen.
+  Widget _buildProgressCard() {
+    final message = progressMessage;
+
+    if (message == null) {
+      return const Center(
+        child: SizedBox(
+          height: 18,
+          width: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white54,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: message.color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: message.color),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(message.icon, color: message.color, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: message.color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Previous (and Next, once Level 6 exists) buttons.
   Widget _buildLevelNavButtons() {
     final previousButton = _buildChunkyButton(
@@ -1317,20 +1565,10 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
                     textAlign: TextAlign.center,
                   ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
 
-                  Text(
-                    completedAllRounds
-                        ? 'Excellent memory! You completed all $maxRounds rounds!'
-                        : playedWell
-                            ? 'Great memory! You completed $roundsCompleted rounds.'
-                            : 'No rounds completed this time. Try again!',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.white70,
-                    ),
-                  ),
+                  // Progress message based on the player's history
+                  _buildProgressCard(),
 
                   const SizedBox(height: 10),
 
@@ -1575,4 +1813,22 @@ class _MemoryMatrixState extends State<MemoryMatrix> {
       ),
     );
   }
+}
+
+// ============================================================
+// PROGRESS MESSAGE MODEL
+// ============================================================
+
+class _ProgressMessage {
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  const _ProgressMessage({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
@@ -10,6 +11,7 @@ import '../services/game_audio.dart';
 import '../services/game_options_menu.dart';
 import '../services/score_identity.dart';
 import '../widgets/pause_menu.dart';
+import 'tile_matrix.dart';
 
 class DetectiveCase {
   final String title;
@@ -133,6 +135,13 @@ class _LogicDetectiveState extends State<LogicDetective> {
   bool _showResults = false; // The level complete screen is visible.
   bool _isCorrect = false;
   bool _timedOut = false;
+
+  // Progress message shown on the result screen (null while loading).
+  _ProgressMessage? _progressMessage;
+
+  // Increases every time a new round starts, so a slow history lookup
+  // from an old round can never overwrite the message of a new round.
+  int _session = 0;
 
   final List<DetectiveCase> _cases = const [
     DetectiveCase(
@@ -337,10 +346,23 @@ class _LogicDetectiveState extends State<LogicDetective> {
     required bool correct,
     required bool timedOut,
   }) async {
-    if (!enableScoreSaving) return;
+    // Remember which round this save belongs to.
+    final int session = _session;
+
+    if (!enableScoreSaving) {
+      // No database, so there is no history to compare with.
+      if (mounted && session == _session) {
+        setState(() => _progressMessage = _buildProgressMessage(null));
+      }
+      return;
+    }
 
     try {
       final identityFields = await ScoreIdentity.fields();
+
+      // Compare against past games BEFORE saving this one, so the
+      // current game isn't compared with itself.
+      await _evaluateProgress(identityFields, session);
 
       final scoreReference =
           await FirebaseFirestore.instance.collection('scores').add({
@@ -370,7 +392,231 @@ class _LogicDetectiveState extends State<LogicDetective> {
     } catch (e) {
       // Not connected, not configured, or too slow: the game carries on.
       debugPrint('Could not save Logic Detective score: $e');
+
+      // Make sure the result screen never keeps spinning.
+      if (mounted && session == _session && _progressMessage == null) {
+        setState(() => _progressMessage = _buildProgressMessage(null));
+      }
     }
+  }
+
+  // ------------------------------------------------------------
+  // PROGRESS COMPARISON
+  // (uses the same playedGameHistory as game_history.dart)
+  // ------------------------------------------------------------
+
+  // NOTE: this assumes ScoreIdentity.fields() contains the player id under
+  // 'playerId', 'userId' or 'uid'. Change the keys below if yours differs.
+  Future<List<Map<String, dynamic>>> _loadPreviousGames(
+    Map<String, dynamic> identityFields,
+  ) async {
+    final playerId = (identityFields['playerId'] ??
+            identityFields['userId'] ??
+            identityFields['uid'])
+        ?.toString();
+    if (playerId == null || playerId.isEmpty) return [];
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(playerId)
+        .get()
+        .timeout(const Duration(seconds: 4));
+
+    final raw = doc.data()?['playedGameHistory'];
+    if (raw is! List) return [];
+
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((g) =>
+            (g['levelName'] ?? g['gameName'] ?? g['game']) ==
+                'Case Detective' &&
+            g['difficulty'] == widget.difficulty.label)
+        .toList(); // oldest -> newest (same order the history screen uses)
+  }
+
+  Future<void> _evaluateProgress(
+    Map<String, dynamic> identityFields,
+    int session,
+  ) async {
+    List<Map<String, dynamic>>? previous;
+    try {
+      previous = await _loadPreviousGames(identityFields);
+    } catch (e) {
+      // History could not be loaded: show a plain message instead of
+      // wrongly claiming this is the player's first game.
+      debugPrint('Could not load history: $e');
+    }
+
+    final message = _buildProgressMessage(previous);
+    if (!mounted || session != _session) return;
+    setState(() => _progressMessage = message);
+  }
+
+  _ProgressMessage _buildProgressMessage(List<Map<String, dynamic>>? previous) {
+    bool solvedOf(Map<String, dynamic> g) =>
+        (g['correct'] as num?)?.round() == 1;
+    int timeOf(Map<String, dynamic> g) =>
+        (g['timeRemaining'] as num?)?.round() ?? -1;
+
+    // ---------- HISTORY NOT AVAILABLE ----------
+    if (previous == null) {
+      if (_isCorrect) {
+        return _ProgressMessage(
+          title: 'CASE SOLVED!',
+          detail: 'You earned a grade $_grade and $_correctScore points. '
+              'Great detective work!',
+          icon: Icons.verified_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: _timedOut ? 'TIME IS UP!' : 'CASE STILL OPEN',
+        detail: 'Compare every clue with the picture and try again!',
+        icon: _timedOut ? Icons.timer_off_rounded : Icons.search_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    final solved = previous.where(solvedOf).toList();
+    final bool timed = _timeLimit != null;
+
+    // ---------- NOT SOLVED ----------
+    if (!_isCorrect) {
+      final speedTip = _timedOut ? ' Try to answer a little faster.' : '';
+
+      if (previous.isEmpty) {
+        return _ProgressMessage(
+          title: _timedOut ? 'TIME IS UP!' : 'CASE STILL OPEN',
+          detail: 'No case solved yet on this difficulty. Compare every '
+              'clue with the picture and try again!$speedTip',
+          icon: _timedOut ? Icons.timer_off_rounded : Icons.search_rounded,
+          color: Colors.redAccent,
+        );
+      }
+      if (solved.isNotEmpty) {
+        return _ProgressMessage(
+          title: 'SO CLOSE!',
+          detail: 'You\'ve solved ${solved.length} '
+              '${solved.length == 1 ? "case" : "cases"} on this difficulty '
+              'before. Read the explanation and try again!$speedTip',
+          icon: Icons.refresh_rounded,
+          color: Colors.redAccent,
+        );
+      }
+      return _ProgressMessage(
+        title: 'KEEP INVESTIGATING!',
+        detail: 'No case solved yet on this difficulty. Look at the '
+            'picture and the clues together.$speedTip',
+        icon: Icons.search_rounded,
+        color: Colors.orangeAccent,
+      );
+    }
+
+    // ---------- FIRST CASE SOLVED ----------
+    if (solved.isEmpty) {
+      return _ProgressMessage(
+        title: 'FIRST CASE SOLVED!',
+        detail: previous.isEmpty
+            ? 'You earned a grade $_grade and $_correctScore points. '
+                'That\'s your starting mark — can you beat it?'
+            : 'You cracked it after ${previous.length} unsolved '
+                '${previous.length == 1 ? "attempt" : "attempts"}. '
+                'You earned a grade $_grade!',
+        icon: Icons.flag_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    final bool lastWasUnsolved = !solvedOf(previous.last);
+
+    // Consecutive solved cases, counting this one.
+    int run = 0;
+    for (final g in previous.reversed) {
+      if (solvedOf(g)) {
+        run++;
+      } else {
+        break;
+      }
+    }
+    final int streak = run + 1;
+
+    // ---------- TIMED MODES: COMPARE SOLVE SPEED ----------
+    final solvedTimes = solved.map(timeOf).where((t) => t >= 0).toList();
+
+    if (timed && solvedTimes.isNotEmpty) {
+      final int bestTime = solvedTimes.reduce(max);
+
+      if (_timeRemaining > bestTime) {
+        return _ProgressMessage(
+          title: 'NEW FASTEST SOLVE!',
+          detail: '${_timeRemaining - bestTime}s faster than your previous '
+              'best (${bestTime}s left).',
+          icon: Icons.emoji_events_rounded,
+          color: Colors.amber,
+        );
+      }
+
+      if (_timeRemaining == bestTime) {
+        return _ProgressMessage(
+          title: 'MATCHED YOUR FASTEST!',
+          detail: 'You solved it as fast as your best — '
+              '${_timeRemaining}s left.',
+          icon: Icons.equalizer_rounded,
+          color: Colors.lightGreenAccent,
+        );
+      }
+
+      if (lastWasUnsolved) {
+        return _ProgressMessage(
+          title: 'BOUNCING BACK!',
+          detail: 'You solved it after missing your last case. '
+              'Your fastest left ${bestTime}s.',
+          icon: Icons.replay_circle_filled_rounded,
+          color: Colors.cyanAccent,
+        );
+      }
+
+      final lastSolvedTime = solvedTimes.last;
+      if (_timeRemaining > lastSolvedTime) {
+        return _ProgressMessage(
+          title: 'YOU\'RE IMPROVING!',
+          detail: '${_timeRemaining - lastSolvedTime}s faster than your last '
+              'solved case. Your fastest left ${bestTime}s.',
+          icon: Icons.trending_up_rounded,
+          color: Colors.cyanAccent,
+        );
+      }
+
+      return _ProgressMessage(
+        title: _grade == 'S' ? 'GREAT, BUT NOT YOUR FASTEST' : 'SOLVED, BUT SLOWER',
+        detail: '${bestTime - _timeRemaining}s slower than your fastest '
+            '(${bestTime}s left). Spot the key clue sooner next time.',
+        icon: Icons.trending_down_rounded,
+        color: Colors.orangeAccent,
+      );
+    }
+
+    // ---------- EASY MODE (NO TIMER): COMPARE CONSISTENCY ----------
+    if (lastWasUnsolved) {
+      return _ProgressMessage(
+        title: 'BOUNCING BACK!',
+        detail: 'You solved it after missing your last case. '
+            'You\'ve now solved ${solved.length + 1} cases on '
+            '$_difficultyName.',
+        icon: Icons.replay_circle_filled_rounded,
+        color: Colors.cyanAccent,
+      );
+    }
+
+    return _ProgressMessage(
+      title: 'ON A ROLL!',
+      detail: 'That\'s $streak cases solved in a row! '
+          'You\'ve now solved ${solved.length + 1} cases on '
+          '$_difficultyName.',
+      icon: Icons.local_fire_department_rounded,
+      color: Colors.amber,
+    );
   }
 
   // ------------------------------------------------------------
@@ -409,6 +655,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
     _timer?.cancel();
     _resultsTimer?.cancel();
     audio.stopEffects();
+    _session++;
 
     if (newCase && _cases.length > 1) {
       final int current = _cases.indexOf(_currentCase);
@@ -428,6 +675,7 @@ class _LogicDetectiveState extends State<LogicDetective> {
       _timedOut = false;
       _isPaused = false;
       _showOptions = false;
+      _progressMessage = null;
     });
 
     if (_scrollController.hasClients) {
@@ -449,6 +697,22 @@ class _LogicDetectiveState extends State<LogicDetective> {
     _resultsTimer?.cancel();
     audio.stopMusic();
     Navigator.of(context).pop();
+  }
+
+  // PREVIOUS LEVEL → Level 5: Tile Matrix (same difficulty)
+  void _goToPreviousLevel() {
+    _timer?.cancel();
+    _resultsTimer?.cancel();
+    audio.stopMusic();
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MemoryMatrix(
+          difficulty: widget.difficulty,
+        ),
+      ),
+    );
   }
 
   // ------------------------------------------------------------
@@ -962,34 +1226,127 @@ class _LogicDetectiveState extends State<LogicDetective> {
   }
 
   // ------------------------------------------------------------
-  // LEVEL COMPLETE SCREEN (same layout as Level 1)
+  // RESULT SCREEN (same style as Picture Puzzle)
   // ------------------------------------------------------------
 
-  Widget _buildStatRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
+  Widget _buildChunkyButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+    bool iconAfterText = false,
+  }) {
+    final iconWidget = Icon(icon, color: Colors.white, size: 20);
+    final textWidget = Flexible(
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        height: 50,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.4),
+              offset: const Offset(0, 4),
+              blurRadius: 8,
             ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: iconAfterText
+              ? [textWidget, const SizedBox(width: 8), iconWidget]
+              : [iconWidget, const SizedBox(width: 8), textWidget],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatBadge(String title, String value) {
+    return Column(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(color: Colors.white60, fontSize: 13),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
           ),
-          const SizedBox(width: 16),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProgressCard() {
+    final message = _progressMessage;
+
+    if (message == null) {
+      return const Center(
+        child: SizedBox(
+          height: 18,
+          width: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white54,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: message.color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: message.color),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(message.icon, color: message.color, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: message.color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
               ),
-            ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
           ),
         ],
       ),
@@ -997,176 +1354,157 @@ class _LogicDetectiveState extends State<LogicDetective> {
   }
 
   Widget _buildLevelCompleteScreen() {
-    final String subtitle = _isCorrect
-        ? 'Case solved! Great detective work.'
-        : _timedOut
-            ? 'Time ran out and the case is still open.'
-            : 'Not quite. Read the explanation below.';
+    final bool solved = _isCorrect;
 
-    final String resultText = _isCorrect
-        ? 'Solved ✅'
+    final String title = solved
+        ? '🎉 LEVEL COMPLETE!'
         : _timedOut
-            ? 'Time\'s up ⏰'
-            : 'Unsolved ❌';
+            ? '⏰ TIME IS UP!'
+            : '😅 KEEP INVESTIGATING!';
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight: constraints.maxHeight - 24,
-            ),
-            child: Center(
+    return Center(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white24),
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
-                    '🎉 LEVEL COMPLETE!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFFFFD700),
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
                   Text(
-                    subtitle,
+                    title,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: solved ? Colors.amber : Colors.redAccent,
+                      letterSpacing: 1,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Progress message based on the player's history
+                  _buildProgressCard(),
+                  const SizedBox(height: 16),
+
+                  if (solved) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.amber),
+                      ),
+                      child: Text(
+                        'GRADE: $_grade',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.amber,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildStatBadge('🏆 Score', '$_earnedScore'),
+                      _buildStatBadge('⭐ XP', '+$_earnedXp'),
+                      _buildStatBadge(
+                        '⏱ Time Left',
+                        _timeLimit == null ? '∞' : '${_timeRemaining}s',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  Text(
+                    '🔍 ${_currentCase.title}  •  $_difficultyName',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-
-                  const SizedBox(height: 22),
-
-                  // GRADE BADGE
-                  Container(
-                    width: 110,
-                    height: 110,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
-                      border: Border.all(
-                        color: const Color(0xFFFFD700),
-                        width: 4,
-                      ),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black45,
-                          blurRadius: 15,
-                          offset: Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        _grade,
-                        style: const TextStyle(
-                          fontSize: 54,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF811252),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 22),
-
-                  // STATS CARD
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: Column(
-                      children: [
-                        _buildStatRow('Case:', _currentCase.title),
-                        const Divider(color: Colors.white12),
-                        _buildStatRow('Result:', resultText),
-                        const Divider(color: Colors.white12),
-                        _buildStatRow(
-                          'XP Earned:',
-                          '+$_earnedXp',
-                        ),
-                        const Divider(color: Colors.white12),
-                        _buildStatRow(
-                          'Score:',
-                          '$_earnedScore / $_correctScore',
-                        ),
-                        const Divider(color: Colors.white12),
-                        _buildStatRow('Difficulty:', _difficultyName),
-                        const Divider(color: Colors.white12),
-                        _buildStatRow(
-                          'Time Left:',
-                          _timeLimit == null ? 'Unlimited' : '${_timeRemaining}s',
-                        ),
-                      ],
-                    ),
-                  ),
-
                   const SizedBox(height: 14),
 
-                  // EXPLANATION CARD
+                  // Explanation card
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(20),
+                      color: Colors.black.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: _isCorrect ? Colors.greenAccent : Colors.white24,
-                        width: _isCorrect ? 2 : 1,
+                        color: solved ? Colors.greenAccent : Colors.white24,
+                        width: solved ? 2 : 1,
                       ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _sectionLabel('WHAT HAPPENED'),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
                         Text(
                           _currentCase.explanation,
                           style: const TextStyle(
                             color: Colors.white70,
-                            height: 1.45,
-                            fontSize: 14,
+                            height: 1.4,
+                            fontSize: 13,
                           ),
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 20),
 
-                  const SizedBox(height: 28),
-
-                  _3DButton(
-                    text: 'PLAY AGAIN',
-                    color: const Color(0xFFFF8008),
-                    shadowColor: const Color(0xFF993D00),
-                    textColor: Colors.white,
+                  // Try Again (a fresh random case)
+                  _buildChunkyButton(
+                    label: 'Try Again',
+                    icon: Icons.refresh_rounded,
+                    color: const Color(0xFF2EC4B6),
                     onPressed: _playAgain,
                   ),
+                  const SizedBox(height: 10),
 
-                  const SizedBox(height: 18),
+                  // Previous level (same difficulty). Level 6 is the
+                  // last level, so there is no Next button.
+                  _buildChunkyButton(
+                    label: 'Previous',
+                    icon: Icons.arrow_back_rounded,
+                    color: const Color(0xFF9B8AD6),
+                    onPressed: _goToPreviousLevel,
+                  ),
+                  const SizedBox(height: 10),
 
-                  _3DButton(
-                    text: 'LEVEL MAP',
-                    color: const Color(0xFFFF4081),
-                    shadowColor: const Color(0xFF990033),
-                    textColor: Colors.white,
+                  // Level Map
+                  _buildChunkyButton(
+                    label: 'Level Map',
+                    icon: Icons.home_rounded,
+                    color: Colors.white24,
                     onPressed: _goToMainMenu,
                   ),
                 ],
               ),
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -1256,75 +1594,20 @@ class _LogicDetectiveState extends State<LogicDetective> {
   }
 }
 
-// REUSABLE CHUNKY 3D GAME BUTTON (same as Level 1)
-class _3DButton extends StatefulWidget {
-  final String text;
+// ============================================================
+// PROGRESS MESSAGE MODEL
+// ============================================================
+
+class _ProgressMessage {
+  final String title;
+  final String detail;
+  final IconData icon;
   final Color color;
-  final Color shadowColor;
-  final Color textColor;
-  final VoidCallback onPressed;
 
-  const _3DButton({
-    required this.text,
+  const _ProgressMessage({
+    required this.title,
+    required this.detail,
+    required this.icon,
     required this.color,
-    required this.shadowColor,
-    required this.textColor,
-    required this.onPressed,
   });
-
-  @override
-  State<_3DButton> createState() => _3DButtonState();
-}
-
-class _3DButtonState extends State<_3DButton> {
-  bool _isPressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
-      onTapUp: (_) {
-        setState(() => _isPressed = false);
-        widget.onPressed();
-      },
-      onTapCancel: () => setState(() => _isPressed = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        width: 200,
-        height: 54,
-        transform: Matrix4.translationValues(0, _isPressed ? 4 : 0, 0),
-        decoration: BoxDecoration(
-          color: widget.color,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.8),
-            width: 2,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: widget.shadowColor,
-              offset: Offset(0, _isPressed ? 1 : 5),
-              blurRadius: 0,
-            ),
-            const BoxShadow(
-              color: Colors.black38,
-              offset: Offset(0, 6),
-              blurRadius: 8,
-            ),
-          ],
-        ),
-        child: Center(
-          child: Text(
-            widget.text,
-            style: TextStyle(
-              color: widget.textColor,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.2,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

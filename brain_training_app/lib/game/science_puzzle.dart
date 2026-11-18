@@ -70,6 +70,9 @@ class _SciencePuzzleState extends State<SciencePuzzle>
   int score = 0;
   int streakCount = 0;
 
+  // Progress message shown on the result screen (null while loading).
+  _ProgressMessage? progressMessage;
+
   Timer? timer;
   late ConfettiController confetti;
 
@@ -141,6 +144,7 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     showOptions = false;
     xp = 0;
     score = 0;
+    progressMessage = null;
 
     startMemory();
   }
@@ -304,9 +308,17 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     saveScore(win);
   }
 
+  // ============================================================
+  // SAVING + PROGRESS COMPARISON
+  // ============================================================
+
   Future<void> saveScore(bool win) async {
     try {
       final identityFields = await ScoreIdentity.fields();
+
+      // Compare against past games BEFORE saving this one, so the
+      // current game isn't compared with itself.
+      await _evaluateProgress(identityFields, win);
 
       final scoreReference =
           await FirebaseFirestore.instance.collection('scores').add({
@@ -331,6 +343,157 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     } catch (e) {
       debugPrint('Error saving Picture Puzzle score: $e');
     }
+  }
+
+  /// Loads previous completed Picture Puzzle games on the same difficulty
+  /// from the same `playedGameHistory` that game_history.dart displays.
+  ///
+  /// NOTE: this assumes ScoreIdentity.fields() contains the player id under
+  /// 'playerId', 'userId' or 'uid'. Change the keys below if yours differs.
+  Future<List<Map<String, dynamic>>> _loadPreviousGames(
+    Map<String, dynamic> identityFields,
+  ) async {
+    final playerId = (identityFields['playerId'] ??
+            identityFields['userId'] ??
+            identityFields['uid'])
+        ?.toString();
+    if (playerId == null || playerId.isEmpty) return [];
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(playerId)
+        .get();
+
+    final raw = doc.data()?['playedGameHistory'];
+    if (raw is! List) return [];
+
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((g) =>
+            (g['levelName'] ?? g['gameName'] ?? g['game']) ==
+                'Picture Puzzle' &&
+            g['difficulty'] == widget.difficulty.label &&
+            g['completed'] == true)
+        .toList(); // oldest -> newest (same order the history screen uses)
+  }
+
+  Future<void> _evaluateProgress(
+    Map<String, dynamic> identityFields,
+    bool win,
+  ) async {
+    List<Map<String, dynamic>> previous = [];
+    try {
+      previous = await _loadPreviousGames(identityFields);
+    } catch (e) {
+      debugPrint('Could not load history: $e');
+    }
+
+    final message = _buildProgressMessage(win, previous);
+    if (!mounted) return;
+    setState(() => progressMessage = message);
+  }
+
+  _ProgressMessage _buildProgressMessage(
+    bool win,
+    List<Map<String, dynamic>> previous,
+  ) {
+    int scoreOf(Map<String, dynamic> g) => (g['score'] as num?)?.round() ?? 0;
+    int movesOf(Map<String, dynamic> g) =>
+        (g['moves'] as num?)?.round() ?? 9999;
+
+    // ---------- LOSS ----------
+    if (!win) {
+      if (previous.isEmpty) {
+        return const _ProgressMessage(
+          title: 'TIME IS UP!',
+          detail: 'No clear yet on this difficulty. Study the image '
+              'carefully and try again!',
+          icon: Icons.timer_off_rounded,
+          color: Colors.redAccent,
+        );
+      }
+      final best = previous.map(scoreOf).reduce(max);
+      return _ProgressMessage(
+        title: 'SO CLOSE!',
+        detail: 'You\'ve beaten this before (best: $best). '
+            'You can do it again!',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    final grade = getGrade();
+
+    // ---------- FIRST CLEAR ----------
+    if (previous.isEmpty) {
+      return _ProgressMessage(
+        title: 'FIRST CLEAR!',
+        detail: 'You earned a grade $grade with $score points. '
+            'That\'s your starting mark — can you beat it?',
+        icon: Icons.flag_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    final bestScore = previous.map(scoreOf).reduce(max);
+    final bestMoves = previous.map(movesOf).reduce(min);
+    final lastScore = scoreOf(previous.last);
+    final lastMoves = movesOf(previous.last);
+
+    // ---------- NEW PERSONAL BEST ----------
+    if (score > bestScore) {
+      final extra = moves < bestMoves
+          ? ' And you used fewer moves than ever ($moves vs $bestMoves)!'
+          : '';
+      return _ProgressMessage(
+        title: grade == 'S' ? 'PERFECT & A NEW BEST!' : 'NEW PERSONAL BEST!',
+        detail: '+${score - bestScore} points over your previous best '
+            '($bestScore).$extra',
+        icon: Icons.emoji_events_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    // ---------- MATCHED BEST ----------
+    if (score == bestScore) {
+      return _ProgressMessage(
+        title: 'MATCHED YOUR BEST!',
+        detail: grade == 'S'
+            ? 'Still flawless — you\'re at the top of your game.'
+            : 'You tied your best score. One fewer move could beat it!',
+        icon: Icons.equalizer_rounded,
+        color: Colors.lightGreenAccent,
+      );
+    }
+
+    // ---------- BETTER THAN LAST GAME ----------
+    if (score > lastScore) {
+      final moveDiff = lastMoves - moves;
+      final moveText =
+          moveDiff >= 0 ? '$moveDiff fewer' : '${-moveDiff} more';
+      return _ProgressMessage(
+        title: 'YOU\'RE IMPROVING!',
+        detail: '+${score - lastScore} points compared to your last game '
+            '($moveText moves). Your best is $bestScore.',
+        icon: Icons.trending_up_rounded,
+        color: Colors.cyanAccent,
+      );
+    }
+
+    // ---------- WORSE THAN BEFORE ----------
+    final gap = bestScore - score;
+    final tip = moves > bestMoves
+        ? 'Try using fewer swaps — your best used $bestMoves moves.'
+        : 'Try solving it a little faster.';
+    return _ProgressMessage(
+      title: grade == 'S' || grade == 'A'
+          ? 'GREAT, BUT NOT YOUR BEST'
+          : 'NOT YOUR BEST YET',
+      detail: '$gap points below your best ($bestScore). $tip',
+      icon: Icons.trending_down_rounded,
+      color: Colors.orangeAccent,
+    );
   }
 
   void goToMainMenu() => Navigator.pop(context);
@@ -512,6 +675,63 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     );
   }
 
+  Widget _buildProgressCard() {
+    final message = progressMessage;
+
+    if (message == null) {
+      return const SizedBox(
+        height: 18,
+        width: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: Colors.white54,
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: message.color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: message.color),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(message.icon, color: message.color, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: message.color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildResultScreen() {
     final bool passed = xp > 0;
     final int timeUsed = hasGameTimer ? totalGameDuration - gameSeconds : 0;
@@ -544,15 +764,12 @@ class _SciencePuzzleState extends State<SciencePuzzle>
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    passed
-                        ? 'Great job! You assembled the puzzle.'
-                        : 'You ran out of time! Try again.',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 14, color: Colors.white70),
-                  ),
+                  const SizedBox(height: 10),
+
+                  // Progress message based on the player's history
+                  _buildProgressCard(),
                   const SizedBox(height: 16),
+
                   if (passed) ...[
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -913,4 +1130,22 @@ class _SciencePuzzleState extends State<SciencePuzzle>
     _shakeController.dispose();
     super.dispose();
   }
+}
+
+// ============================================================
+// PROGRESS MESSAGE MODEL
+// ============================================================
+
+class _ProgressMessage {
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  const _ProgressMessage({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
 }
