@@ -196,6 +196,13 @@ class _WordQuestGameState extends State<WordQuestGame>
   bool _saveFailed = false;
   bool _showOptions = false;
 
+  // Progress message shown on the result screen (null while loading).
+  _ProgressMessage? _progressMessage;
+
+  // Increases on every restart, so a slow history lookup from an old
+  // game can never overwrite the message of a new game.
+  int _session = 0;
+
   // Audio settings shared with the other games.
   double musicVolume = AudioSettings.defaultVolume;
   double soundVolume = AudioSettings.defaultVolume;
@@ -229,6 +236,9 @@ class _WordQuestGameState extends State<WordQuestGame>
   late AnimationController _shakeController;
 
   WordPuzzle get _currentPuzzle => _puzzles[_currentPuzzleIndex];
+
+  double get _accuracy =>
+      _attempts == 0 ? 0.0 : (_correctAnswers / _attempts) * 100;
 
   // ============================================================
   // INITIALIZATION
@@ -767,6 +777,7 @@ class _WordQuestGameState extends State<WordQuestGame>
     _timer?.cancel();
     _shakeController.reset();
     _confetti.stop();
+    _session++;
 
     setState(() {
       _timeLeft = timeLimitPerPuzzle ?? 0;
@@ -782,6 +793,7 @@ class _WordQuestGameState extends State<WordQuestGame>
       _isChecking = false;
       _isSaving = false;
       _saveFailed = false;
+      _progressMessage = null;
       _feedback = '';
       _answerCorrect = false;
       _answerWrong = false;
@@ -830,12 +842,20 @@ class _WordQuestGameState extends State<WordQuestGame>
   }
 
   Future<void> _saveResult() async {
+    final int session = _session;
+
     try {
-      final accuracy =
-          _attempts == 0 ? 0.0 : (_correctAnswers / _attempts) * 100;
+      final accuracy = _accuracy;
 
       // Player identity, so this score counts on the leaderboard.
       final identityFields = await ScoreIdentity.fields();
+
+      // Compare against past games BEFORE saving this one, so the
+      // current game isn't compared with itself. Only done once, so
+      // "Retry Saving" doesn't recompute the message.
+      if (_progressMessage == null) {
+        await _evaluateProgress(identityFields, session);
+      }
 
       final scoreReference =
           await FirebaseFirestore.instance.collection('scores').add({
@@ -869,9 +889,228 @@ class _WordQuestGameState extends State<WordQuestGame>
         setState(() {
           _isSaving = false;
           _saveFailed = true;
+
+          // Make sure the result screen never keeps spinning.
+          if (_progressMessage == null && session == _session) {
+            _progressMessage = _buildProgressMessage(null);
+          }
         });
       }
     }
+  }
+
+  // ============================================================
+  // PROGRESS COMPARISON
+  // (uses the same playedGameHistory as game_history.dart)
+  // ============================================================
+
+  // NOTE: this assumes ScoreIdentity.fields() contains the player id under
+  // 'playerId', 'userId' or 'uid'. Change the keys below if yours differs.
+  Future<List<Map<String, dynamic>>> _loadPreviousGames(
+    Map<String, dynamic> identityFields,
+  ) async {
+    final playerId = (identityFields['playerId'] ??
+            identityFields['userId'] ??
+            identityFields['uid'])
+        ?.toString();
+    if (playerId == null || playerId.isEmpty) return [];
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(playerId)
+        .get()
+        .timeout(const Duration(seconds: 4));
+
+    final raw = doc.data()?['playedGameHistory'];
+    if (raw is! List) return [];
+
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((g) =>
+            (g['levelName'] ?? g['gameName'] ?? g['game']) == 'Word Quest' &&
+            g['difficulty'] == widget.difficulty.label)
+        .toList(); // oldest -> newest (same order the history screen uses)
+  }
+
+  Future<void> _evaluateProgress(
+    Map<String, dynamic> identityFields,
+    int session,
+  ) async {
+    List<Map<String, dynamic>>? previous;
+    try {
+      previous = await _loadPreviousGames(identityFields);
+    } catch (e) {
+      // History could not be loaded: show a plain message instead of
+      // wrongly claiming this is the player's first game.
+      debugPrint('Could not load history: $e');
+    }
+
+    final message = _buildProgressMessage(previous);
+    if (!mounted || session != _session) return;
+    setState(() => _progressMessage = message);
+  }
+
+  _ProgressMessage _buildProgressMessage(List<Map<String, dynamic>>? previous) {
+    int wordsOf(Map<String, dynamic> g) =>
+        (g['wordsSolved'] as num?)?.round() ?? 0;
+    int accOf(Map<String, dynamic> g) =>
+        (g['accuracy'] as num?)?.round() ?? 0;
+    int xpOf(Map<String, dynamic> g) => (g['xp'] as num?)?.round() ?? 0;
+    int streakOf(Map<String, dynamic> g) =>
+        (g['streak'] as num?)?.round() ?? 0;
+
+    final int currentAcc = _accuracy.round();
+    final bool completedAll = _wordsSolved >= roundsToPlay;
+    final int wrongTries = _attempts - _correctAnswers;
+
+    // ---------- HISTORY NOT AVAILABLE ----------
+    if (previous == null) {
+      if (_wordsSolved > 0) {
+        return _ProgressMessage(
+          title: completedAll ? 'ALL WORDS SOLVED!' : 'GREAT EFFORT!',
+          detail: 'You solved $_wordsSolved/$roundsToPlay words with '
+              '$currentAcc% accuracy.',
+          icon: Icons.verified_rounded,
+          color: Colors.amber,
+        );
+      }
+      return const _ProgressMessage(
+        title: 'NO WORDS SOLVED',
+        detail: 'Look for what all four pictures have in common, then '
+            'try again!',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    // ---------- NO WORDS SOLVED ----------
+    if (_wordsSolved == 0) {
+      if (previous.isEmpty) {
+        return const _ProgressMessage(
+          title: 'NO WORDS SOLVED',
+          detail: 'Look for what all four pictures have in common, then '
+              'try again!',
+          icon: Icons.refresh_rounded,
+          color: Colors.redAccent,
+        );
+      }
+      final bestWords = previous.map(wordsOf).reduce(max);
+      return _ProgressMessage(
+        title: 'KEEP PRACTICING!',
+        detail: 'No words solved this time. Your best is $bestWords '
+            '${bestWords == 1 ? "word" : "words"} — you\'ve got this!',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    // ---------- FIRST GAME ON THIS DIFFICULTY ----------
+    if (previous.isEmpty) {
+      if (completedAll) {
+        return _ProgressMessage(
+          title: 'FIRST CLEAR!',
+          detail: 'You solved all $roundsToPlay words with $currentAcc% '
+              'accuracy. That\'s your starting mark — can you beat it?',
+          icon: Icons.flag_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'FIRST RUN!',
+        detail: 'You solved $_wordsSolved/$roundsToPlay words with '
+            '$currentAcc% accuracy. That\'s your starting mark — can you go '
+            'further?',
+        icon: Icons.flag_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    final bestWords = previous.map(wordsOf).reduce(max);
+    final bestAcc = previous.map(accOf).reduce(max);
+    final bestXp = previous.map(xpOf).reduce(max);
+    final bestPrevStreak = previous.map(streakOf).reduce(max);
+    final lastWords = wordsOf(previous.last);
+
+    final streakNote = (_bestStreak >= 3 && _bestStreak > bestPrevStreak)
+        ? ' Longest streak yet: $_bestStreak!'
+        : '';
+
+    // ---------- NEW PERSONAL BEST ----------
+    if (_wordsSolved > bestWords) {
+      final bool perfect = completedAll && wrongTries == 0;
+      return _ProgressMessage(
+        title: perfect ? 'PERFECT & A NEW BEST!' : 'NEW PERSONAL BEST!',
+        detail: '+${_wordsSolved - bestWords} '
+            '${_wordsSolved - bestWords == 1 ? "word" : "words"} over your '
+            'previous best ($bestWords).$streakNote',
+        icon: Icons.emoji_events_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    // ---------- MATCHED BEST WORD COUNT ----------
+    if (_wordsSolved == bestWords) {
+      if (currentAcc > bestAcc) {
+        return _ProgressMessage(
+          title: 'SAME WORDS, SHARPER!',
+          detail: 'You solved as many words as your best, with better '
+              'accuracy ($currentAcc% vs $bestAcc%).$streakNote',
+          icon: Icons.gps_fixed_rounded,
+          color: Colors.amber,
+        );
+      }
+      if (_xp > bestXp) {
+        return _ProgressMessage(
+          title: 'SAME WORDS, MORE XP!',
+          detail: 'You matched your best word count and earned '
+              '${_xp - bestXp} more XP than ever before.$streakNote',
+          icon: Icons.stars_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'MATCHED YOUR BEST!',
+        detail: (completedAll && wrongTries == 0)
+            ? 'Still flawless — you\'re at the top of your game.$streakNote'
+            : completedAll
+                ? 'You tied your best. Fewer wrong tries and quicker '
+                    'answers will earn you more XP!$streakNote'
+                : 'You tied your best. One more word could beat it!'
+                    '$streakNote',
+        icon: Icons.equalizer_rounded,
+        color: Colors.lightGreenAccent,
+      );
+    }
+
+    // ---------- BETTER THAN LAST GAME ----------
+    if (_wordsSolved > lastWords) {
+      return _ProgressMessage(
+        title: 'YOU\'RE IMPROVING!',
+        detail: '+${_wordsSolved - lastWords} '
+            '${_wordsSolved - lastWords == 1 ? "word" : "words"} compared to '
+            'your last game. Your best is $bestWords.$streakNote',
+        icon: Icons.trending_up_rounded,
+        color: Colors.cyanAccent,
+      );
+    }
+
+    // ---------- WORSE THAN BEFORE ----------
+    final int gap = bestWords - _wordsSolved;
+    final String tip = wrongTries > 0
+        ? 'You had $wrongTries wrong ${wrongTries == 1 ? "try" : "tries"} — '
+            'check your letters before the last box fills.'
+        : timeLimitPerPuzzle != null
+            ? 'Try solving each word a little faster.'
+            : 'Try to solve a few more words.';
+    final bool decent = _wordsSolved * 10 >= roundsToPlay * 7;
+    return _ProgressMessage(
+      title: decent ? 'GREAT, BUT NOT YOUR BEST' : 'NOT YOUR BEST YET',
+      detail: '$gap ${gap == 1 ? "word" : "words"} below your best '
+          '($bestWords). $tip',
+      icon: Icons.trending_down_rounded,
+      color: Colors.orangeAccent,
+    );
   }
 
   // ============================================================
@@ -1550,10 +1789,65 @@ class _WordQuestGameState extends State<WordQuestGame>
     );
   }
 
+  Widget _buildProgressCard() {
+    final message = _progressMessage;
+
+    if (message == null) {
+      return const Center(
+        child: SizedBox(
+          height: 18,
+          width: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white54,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: message.color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: message.color),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(message.icon, color: message.color, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: message.color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResultScreen() {
-    final accuracy = _attempts == 0 ? 0.0 : (_correctAnswers / _attempts) * 100;
+    final accuracy = _accuracy;
     final bool solvedAny = _wordsSolved > 0;
-    final bool allRoundsComplete = _wordsSolved >= roundsToPlay;
 
     return Center(
       child: SingleChildScrollView(
@@ -1583,16 +1877,11 @@ class _WordQuestGameState extends State<WordQuestGame>
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    allRoundsComplete
-                        ? 'You completed every round!'
-                        : solvedAny
-                            ? 'Great effort on Word Quest!'
-                            : 'No words solved this time. Try again!',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 14, color: Colors.white70),
-                  ),
+                  const SizedBox(height: 10),
+
+                  // Progress message based on the player's history
+                  _buildProgressCard(),
+
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -1921,4 +2210,22 @@ class _WordQuestGameState extends State<WordQuestGame>
       ),
     );
   }
+}
+
+// ============================================================
+// PROGRESS MESSAGE MODEL
+// ============================================================
+
+class _ProgressMessage {
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  const _ProgressMessage({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
 }

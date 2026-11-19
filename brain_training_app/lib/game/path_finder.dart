@@ -83,6 +83,13 @@ class _PathFinderState extends State<PathFinder> {
   bool showOptions = false;
   bool musicStoppedForMute = false;
 
+  // Progress message shown on the result screen (null while loading).
+  _ProgressMessage? progressMessage;
+
+  // Increases on every restart, so a slow history lookup from an old
+  // game can never overwrite the message of a new game.
+  int _session = 0;
+
   @override
   void initState() {
     super.initState();
@@ -678,6 +685,7 @@ class _PathFinderState extends State<PathFinder> {
     audioPlayer.stop();
     musicPlayer.stop();
     usedMazeSignatures.clear();
+    _session++;
     setState(() {
       currentRound = 1;
       lives = startingLives;
@@ -693,6 +701,7 @@ class _PathFinderState extends State<PathFinder> {
       isPreview = true;
       isMistakeReveal = false;
       showTryAgain = false;
+      progressMessage = null;
     });
     _prepareRound();
     _startBackgroundMusic();
@@ -723,6 +732,8 @@ class _PathFinderState extends State<PathFinder> {
     if (isGameOver) return;
     gameTimer?.cancel();
 
+    final int session = _session;
+
     // Mark the game as over right away, so no sound effect can bring
     // the music back on the result screen.
     setState(() {
@@ -737,6 +748,10 @@ class _PathFinderState extends State<PathFinder> {
     try {
       // Player identity, so this score counts on the leaderboard.
       final identityFields = await ScoreIdentity.fields();
+
+      // Compare against past games BEFORE saving this one, so the
+      // current game isn't compared with itself.
+      await _evaluateProgress(identityFields, session);
 
       final scoreReference =
           await FirebaseFirestore.instance.collection('scores').add({
@@ -758,7 +773,204 @@ class _PathFinderState extends State<PathFinder> {
       await ScoreIdentity.recordRecentGame(scoreReference);
     } catch (error) {
       debugPrint('Could not save Path Finder score: $error');
+
+      // Make sure the result screen never keeps spinning.
+      if (mounted && session == _session && progressMessage == null) {
+        setState(() => progressMessage = _buildProgressMessage(null));
+      }
     }
+  }
+
+  // ============================================================
+  // PROGRESS COMPARISON
+  // (uses the same playedGameHistory as game_history.dart)
+  // ============================================================
+
+  // NOTE: this assumes ScoreIdentity.fields() contains the player id under
+  // 'playerId', 'userId' or 'uid'. Change the keys below if yours differs.
+  Future<List<Map<String, dynamic>>> _loadPreviousGames(
+    Map<String, dynamic> identityFields,
+  ) async {
+    final playerId = (identityFields['playerId'] ??
+            identityFields['userId'] ??
+            identityFields['uid'])
+        ?.toString();
+    if (playerId == null || playerId.isEmpty) return [];
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(playerId)
+        .get()
+        .timeout(const Duration(seconds: 4));
+
+    final raw = doc.data()?['playedGameHistory'];
+    if (raw is! List) return [];
+
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((g) =>
+            (g['levelName'] ?? g['gameName'] ?? g['game']) == 'Path Finder' &&
+            g['difficulty'] == widget.difficulty.label)
+        .toList(); // oldest -> newest (same order the history screen uses)
+  }
+
+  Future<void> _evaluateProgress(
+    Map<String, dynamic> identityFields,
+    int session,
+  ) async {
+    List<Map<String, dynamic>>? previous;
+    try {
+      previous = await _loadPreviousGames(identityFields);
+    } catch (error) {
+      // History could not be loaded: show a plain message instead of
+      // wrongly claiming this is the player's first game.
+      debugPrint('Could not load history: $error');
+    }
+
+    final message = _buildProgressMessage(previous);
+    if (!mounted || session != _session) return;
+    setState(() => progressMessage = message);
+  }
+
+  _ProgressMessage _buildProgressMessage(List<Map<String, dynamic>>? previous) {
+    int roundsOf(Map<String, dynamic> g) =>
+        (g['roundsCompleted'] as num?)?.round() ?? 0;
+    int xpOf(Map<String, dynamic> g) => (g['xp'] as num?)?.round() ?? 0;
+
+    final bool fullyCompleted = roundsCompleted == maxRounds;
+    final bool flawless =
+        fullyCompleted && mistakes == 0 && lives == startingLives;
+    final String grade = _gradeForAccuracy(accuracy);
+
+    // ---------- HISTORY NOT AVAILABLE ----------
+    if (previous == null) {
+      if (roundsCompleted > 0) {
+        return _ProgressMessage(
+          title: fullyCompleted ? 'ALL MAZES SOLVED!' : 'GREAT EFFORT!',
+          detail: 'You solved $roundsCompleted/$maxRounds mazes and earned '
+              'a grade $grade.',
+          icon: Icons.verified_rounded,
+          color: Colors.amber,
+        );
+      }
+      return const _ProgressMessage(
+        title: 'NO MAZES SOLVED',
+        detail: 'Study the route while the maze is showing, then trace it '
+            'from memory.',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    // ---------- NO MAZES SOLVED ----------
+    if (roundsCompleted == 0) {
+      if (previous.isEmpty) {
+        return const _ProgressMessage(
+          title: 'NO MAZES SOLVED',
+          detail: 'Study the route while the maze is showing, then trace it '
+              'from memory.',
+          icon: Icons.refresh_rounded,
+          color: Colors.redAccent,
+        );
+      }
+      final bestRounds = previous.map(roundsOf).reduce(max);
+      return _ProgressMessage(
+        title: 'KEEP PRACTICING!',
+        detail: 'No mazes solved this time. Your best is $bestRounds '
+            '${bestRounds == 1 ? "maze" : "mazes"} — you\'ve got this!',
+        icon: Icons.refresh_rounded,
+        color: Colors.redAccent,
+      );
+    }
+
+    // ---------- FIRST GAME ON THIS DIFFICULTY ----------
+    if (previous.isEmpty) {
+      if (fullyCompleted) {
+        return _ProgressMessage(
+          title: 'FIRST CLEAR!',
+          detail: 'You solved all $maxRounds mazes with $lives '
+              '${lives == 1 ? "life" : "lives"} left (grade $grade). '
+              'That\'s your starting mark — can you beat it?',
+          icon: Icons.flag_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'FIRST RUN!',
+        detail: 'You solved $roundsCompleted/$maxRounds mazes (grade $grade). '
+            'That\'s your starting mark — can you go further?',
+        icon: Icons.flag_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    final bestRounds = previous.map(roundsOf).reduce(max);
+    final bestXp = previous.map(xpOf).reduce(max);
+    final lastRounds = roundsOf(previous.last);
+
+    // ---------- NEW PERSONAL BEST ----------
+    if (roundsCompleted > bestRounds) {
+      final diff = roundsCompleted - bestRounds;
+      return _ProgressMessage(
+        title: flawless ? 'PERFECT & A NEW BEST!' : 'NEW PERSONAL BEST!',
+        detail: '+$diff ${diff == 1 ? "maze" : "mazes"} over your previous '
+            'best ($bestRounds).',
+        icon: Icons.emoji_events_rounded,
+        color: Colors.amber,
+      );
+    }
+
+    // ---------- MATCHED BEST ----------
+    if (roundsCompleted == bestRounds) {
+      if (xp > bestXp) {
+        return _ProgressMessage(
+          title: 'SAME MAZES, MORE XP!',
+          detail: 'You matched your best and earned ${xp - bestXp} more XP '
+              'than ever before.',
+          icon: Icons.stars_rounded,
+          color: Colors.amber,
+        );
+      }
+      return _ProgressMessage(
+        title: 'MATCHED YOUR BEST!',
+        detail: flawless
+            ? 'Still flawless — no wall bumps and all lives kept.'
+            : fullyCompleted
+                ? 'You tied your best. Trace a little faster to earn more '
+                    'bonus XP!'
+                : 'You tied your best. One more maze could beat it!',
+        icon: Icons.equalizer_rounded,
+        color: Colors.lightGreenAccent,
+      );
+    }
+
+    // ---------- BETTER THAN LAST GAME ----------
+    if (roundsCompleted > lastRounds) {
+      final diff = roundsCompleted - lastRounds;
+      return _ProgressMessage(
+        title: 'YOU\'RE IMPROVING!',
+        detail: '+$diff ${diff == 1 ? "maze" : "mazes"} compared to your '
+            'last game. Your best is $bestRounds.',
+        icon: Icons.trending_up_rounded,
+        color: Colors.cyanAccent,
+      );
+    }
+
+    // ---------- WORSE THAN BEFORE ----------
+    final gap = bestRounds - roundsCompleted;
+    final tip = mistakes > 0
+        ? 'You hit $mistakes ${mistakes == 1 ? "wall" : "walls"} — go slowly '
+            'through the corridors you memorized.'
+        : 'Try to memorize the whole route before the maze hides.';
+    final decent = roundsCompleted * 10 >= maxRounds * 7;
+    return _ProgressMessage(
+      title: decent ? 'GREAT, BUT NOT YOUR BEST' : 'NOT YOUR BEST YET',
+      detail: '$gap ${gap == 1 ? "maze" : "mazes"} below your best '
+          '($bestRounds). $tip',
+      icon: Icons.trending_down_rounded,
+      color: Colors.orangeAccent,
+    );
   }
 
   // ============================================================
@@ -1105,6 +1317,62 @@ class _PathFinderState extends State<PathFinder> {
     ]);
   }
 
+  Widget _buildProgressCard() {
+    final message = progressMessage;
+
+    if (message == null) {
+      return const Center(
+        child: SizedBox(
+          height: 18,
+          width: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white54,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: message.color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: message.color),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(message.icon, color: message.color, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: message.color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResultScreen() {
     final String grade = _gradeForAccuracy(accuracy);
     final bool fullyCompleted = roundsCompleted == maxRounds;
@@ -1131,12 +1399,11 @@ class _PathFinderState extends State<PathFinder> {
                     color: fullyCompleted ? Colors.amber : Colors.redAccent,
                     letterSpacing: 1,
                   ), textAlign: TextAlign.center),
-                const SizedBox(height: 8),
-                Text(fullyCompleted
-                    ? 'You remembered every maze!'
-                    : 'Every attempt helps train your memory.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 14, color: Colors.white70)),
+                const SizedBox(height: 10),
+
+                // Progress message based on the player's history
+                _buildProgressCard(),
+
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -1235,6 +1502,24 @@ class _PathFinderState extends State<PathFinder> {
       ),
     );
   }
+}
+
+// ============================================================
+// PROGRESS MESSAGE MODEL
+// ============================================================
+
+class _ProgressMessage {
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  const _ProgressMessage({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
 }
 
 // ============================================================
