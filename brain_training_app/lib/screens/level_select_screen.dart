@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -21,6 +20,7 @@ import '../game/word_quest.dart';
 import '../services/menu_music.dart';
 import '../services/score_identity.dart';
 import '../widgets/game_loading_screen.dart';
+import '../widgets/game_tutorial.dart';
 import '../widgets/menu_options.dart';
 import 'game_history_screen.dart';
 
@@ -42,6 +42,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen>
   @override
   void initState() {
     super.initState();
+    GameTutorial.loadOnboarding();
     _syncLocalProfileToFirebase();
   }
 
@@ -776,6 +777,71 @@ class GameLevelCard extends StatefulWidget {
 class _GameLevelCardState extends State<GameLevelCard> {
   bool _isPressed = false;
 
+  // Handles a tap on the card.
+  // New player (onboarding): only Level 1 works and it plays the guided
+  // tutorial video. Everyone else: open the difficulty popup as normal.
+  Future<void> _handleTap() async {
+    if (GameTutorial.onboarding.value) {
+      if (widget.levelNum != '1') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Finish the Level 1 tutorial first!'),
+          ),
+        );
+        return;
+      }
+
+      await GameTutorial.showVideo(
+        context,
+        levelNum: '1',
+        title: widget.title,
+        guided: true,
+      );
+
+      // Unlock everything (also if the video failed, so nobody gets stuck).
+      await GameTutorial.completeOnboarding();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Great job! All games unlocked 🎉')),
+        );
+      }
+      return;
+    }
+
+    _openDifficultySelection();
+  }
+
+  // The "?" button next to SELECT DIFFICULTY. Plays this game's own video.
+  Widget _buildHelpButton(BuildContext sheetContext) {
+    return GestureDetector(
+      onTap: () => GameTutorial.showVideo(
+        sheetContext,
+        levelNum: widget.levelNum,
+        title: widget.title,
+      ),
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF4081),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: const Center(
+          child: Text(
+            '?',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openDifficultySelection() async {
     if (!widget.unlocked) return;
 
@@ -846,14 +912,21 @@ class _GameLevelCardState extends State<GameLevelCard> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'SELECT DIFFICULTY',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.2,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'SELECT DIFFICULTY',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _buildHelpButton(sheetContext),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -1038,165 +1111,206 @@ class _GameLevelCardState extends State<GameLevelCard> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) {
-        setState(() => _isPressed = true);
-      },
-      onTapUp: (_) {
-        setState(() => _isPressed = false);
-        _openDifficultySelection();
-      },
-      onTapCancel: () {
-        setState(() => _isPressed = false);
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        margin: const EdgeInsets.only(bottom: 18),
-        transform: Matrix4.translationValues(
-          0,
-          _isPressed ? 4 : 0,
-          0,
-        ),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: widget.gradientColors,
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.6),
-            width: 2.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: widget.borderColor,
-              offset: Offset(0, _isPressed ? 2 : 7),
-              blurRadius: 0,
+    return ValueListenableBuilder<bool>(
+      valueListenable: GameTutorial.onboarding,
+      builder: (context, onboarding, _) {
+        // During the new-player tutorial: levels 2-9 are locked,
+        // and the pointing finger sits on level 1.
+        final isLocked = onboarding && widget.levelNum != '1';
+        final showFinger = onboarding && widget.levelNum == '1';
+
+        return GestureDetector(
+          onTapDown: (_) => setState(() => _isPressed = true),
+          onTapUp: (_) {
+            setState(() => _isPressed = false);
+            _handleTap();
+          },
+          onTapCancel: () => setState(() => _isPressed = false),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            margin: const EdgeInsets.only(bottom: 18),
+            transform: Matrix4.translationValues(
+              0,
+              _isPressed ? 4 : 0,
+              0,
             ),
-            const BoxShadow(
-              color: Colors.black38,
-              offset: Offset(0, 8),
-              blurRadius: 10,
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 14,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 65,
-                height: 65,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      offset: const Offset(0, 3),
-                      blurRadius: 4,
-                    ),
-                  ],
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: widget.gradientColors,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.6),
+                width: 2.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: widget.borderColor,
+                  offset: Offset(0, _isPressed ? 2 : 7),
+                  blurRadius: 0,
                 ),
-                child: Center(
-                  child: Text(
-                    widget.icon,
-                    style: const TextStyle(fontSize: 34),
+                const BoxShadow(
+                  color: Colors.black38,
+                  offset: Offset(0, 8),
+                  blurRadius: 10,
+                ),
+              ],
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 65,
+                        height: 65,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              offset: const Offset(0, 3),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            widget.icon,
+                            style: const TextStyle(fontSize: 34),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.25),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                'LEVEL ${widget.levelNum}',
+                                style: const TextStyle(
+                                  color: Color(0xFFFFD700),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              widget.title,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.black38,
+                                    offset: Offset(1, 2),
+                                    blurRadius: 3,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              widget.subtitle,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                const Text(
+                                  'Difficulty: ',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                ...List.generate(widget.starsEarned, (index) {
+                                  return const Icon(
+                                    Icons.star_rounded,
+                                    color: Color(0xFFFFD700),
+                                    size: 18,
+                                  );
+                                }),
+                                const SizedBox(width: 6),
+                                Text(
+                                  widget.starsEarned == 1
+                                      ? 'Easy'
+                                      : widget.starsEarned == 2
+                                          ? 'Medium'
+                                          : 'Hard',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.25),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        'LEVEL ${widget.levelNum}',
-                        style: const TextStyle(
-                          color: Color(0xFFFFD700),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1,
+
+                // Locked overlay (levels 2-9 during the new-player tutorial)
+                if (isLocked)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.55),
+                          borderRadius: BorderRadius.circular(22),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      widget.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        shadows: [
-                          Shadow(
-                            color: Colors.black38,
-                            offset: Offset(1, 2),
-                            blurRadius: 3,
-                          ),
-                        ],
-                      ),
-                    ),
-                    Text(
-                      widget.subtitle,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const Text(
-                          'Difficulty: ',
-                          style: TextStyle(
+                        child: const Center(
+                          child: Icon(
+                            Icons.lock_rounded,
                             color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                            size: 40,
                           ),
                         ),
-                        ...List.generate(widget.starsEarned, (index) {
-                          return const Icon(
-                            Icons.star_rounded,
-                            color: Color(0xFFFFD700),
-                            size: 18,
-                          );
-                        }),
-                        const SizedBox(width: 6),
-                        Text(
-                          widget.starsEarned == 1
-                              ? 'Easy'
-                              : widget.starsEarned == 2
-                                  ? 'Medium'
-                                  : 'Hard',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+
+                // Pointing finger on Level 1 (new-player tutorial only)
+                if (showFinger)
+                  const Positioned(
+                    right: 20,
+                    bottom: -30,
+                    child: IgnorePointer(
+                      child: PointingFinger(flip: false, size: 72),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

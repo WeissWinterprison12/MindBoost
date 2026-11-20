@@ -27,12 +27,14 @@ dev_dependencies:
 
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
+  video_player: ^2.9.0 
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/sounds/
+    - assets/video/tutorials/
     - assets/images/science/
     - assets/images/science_game/
     - assets/images/mindboostlogo.jpg
